@@ -1,0 +1,9 @@
+streamlit
+pandas
+folium
+streamlit-folium
+matplotlib
+wordcloud
+requests
+python-dotenv
+huggingface_hub

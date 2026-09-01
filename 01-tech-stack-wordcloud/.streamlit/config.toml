@@ -1,0 +1,25 @@
+# =====================================================================
+# IT 채용공고 분석 대시보드 — 테마 설정
+#
+# 컨셉: 화이트 & 블루 기반의 모던 B2B SaaS 팔레트
+#   - 채용/데이터 분석 도구에 요구되는 "신뢰감"을 블루 계열로 잡고,
+#     배경은 화이트 + 슬레이트 그레이로 정보 밀도가 높아도 눈이 편하게 구성
+#
+# ⚠️ primaryColor를 변경하면 app.py 상단의 PRIMARY 상수도 반드시 같이 변경할 것.
+#    차트/지도/워드클라우드 색상이 이 값을 기준으로 파생되므로 어긋나면 톤이 깨진다.
+# =====================================================================
+
+[theme]
+base = "light"
+
+primaryColor = "#2563EB"            # Blue 600 — 액센트, 위젯 포커스, 활성 탭
+backgroundColor = "#FFFFFF"         # 메인 캔버스
+secondaryBackgroundColor = "#F1F5F9"  # Slate 100 — 카드/사이드바/입력 배경
+textColor = "#0F172A"               # Slate 900 — 본문 텍스트
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+runOnSave = true
