@@ -10,10 +10,10 @@
 
 - [프로젝트 개요](#프로젝트-개요)
 - [전체 아키텍처](#전체-아키텍처)
-- [1. IT 기술 스택 통계](#1-IT-기술-스택-통계-it-tech-stack-word-cloud)
-- [2. 채용 시급성 감성 분석](#2-채용-시급성-감성-분석-urgency-score-analysis)
-  - [2-1. 채용 시급성 예측 모델](#2-1-채용-시급성-예측-모델)
-  - [2-2. 채용 시급성 대시보드](#2-2-채용-시급성-대시보드)
+- [1. 기술 스택 통계](#1-기술-스택-통계)
+- [2. 채용 시급성 감성 분석](#2-채용-시급성-감성-분석)
+  - [2-1. 채용 적극성 예측 모델](#2-1-채용-적극성-예측-모델)
+  - [2-2. 공고 URL 분석 앱](#2-2-공고-url-분석-앱)
 - [3. 이력서 기반 공고 추천](#3-이력서-기반-공고-추천)
 - [4. 이력서 맞춤형 AI 첨삭](#4-이력서-맞춤형-ai-첨삭)
 - [기술 스택](#기술-스택)
@@ -42,8 +42,8 @@
 | 폴더명 | 내용 | 학습 여부 |
 |---|---|---|
 | 📂`01-tech-stack-wordcloud` | 기술 스택 상위 50개 추출 및 연관 워드클라우드 시각화 | X |
-| 📂`02-urgency-score-analysis/2-1-urgency-prediction` | 텍스트 마이닝 기반 채용 시급성 ML 예측 모델 | O |
-| 📂`02-urgency-score-analysis/2-2-urgency-dashboard` | 기술 스택별 채용 공고 시급성 점수 실시간 집계 대시보드 | X |
+| 📂`02-urgency-score-analysis/2-1-urgency-prediction-model` | 채용 적극성(1~5점) 예측 모델 — TF-IDF + XGBoost | O |
+| 📂`02-urgency-score-analysis/2-2-urgency-app` | 공고 URL을 붙여넣으면 채용 적극성을 채점하는 Streamlit 앱 | X |
 | 📂`03-resume-job-matching` | 이력서 기반 채용 공고 추천 | O |
 | 📂`04-resume-ai-feedback` | 이력서 맞춤형 AI 첨삭 | - (LLM 활용) |
 
@@ -60,8 +60,8 @@
         ├──▶ [1] 기술 스택 추출 → 워드클라우드 시각화
         │
         ├──▶ [2] 핵심역량/우대사항/사내문화 구조화
-        │         ├──▶ [2-1] 시급성 예측 모델 학습
-        │         └──▶ [2-2] 기술 스택별 시급성 대시보드
+        │         ├──▶ [2-1] 적극성 예측 모델 학습
+        │         └──▶ [2-2] 공고 URL 분석 앱
         │
         ├──▶ [3] 이력서 ↔ 공고 매칭 추천
         │
@@ -105,30 +105,54 @@
 반복 채용 여부, 모집 마감 임박 표현, 우대사항의 유연성,
 급여/복지 강조 정도 등을 활용할 수 있습니다.
 
-### 2-1. 채용 시급성 예측 모델
+### 2-1. 채용 적극성 예측 모델
 
 **📂 폴더**: `02-urgency-score-analysis/2-1-urgency-prediction-model`
 
-텍스트 마이닝 기법과 머신러닝 모델링을 결합하여, 공고 텍스트로부터 채용 시급성 점수를
-정량적으로 예측하는 지도학습 기반 시스템입니다.
+공고 텍스트로부터 채용 적극성 점수(1~5)를 예측하는 지도학습 모델입니다.
 
-- 1차 라벨링: LM Studio를 통해 공고 텍스트로부터 초기 1~5점 시급성 스코어 및 사유 생성
-- 2차 라벨 보정: HARD_RULES, SOFT_RULES 키워드 패턴을 적용해 라벨 정밀 보정
-- 피처 엔지니어링: 정제된 공고 본문을 TfidfVectorizer로 수치적 벡터화 및 n-gram 피처 추출
-- 모델링: XGBoost Classifier 활용 및 극심한 클래스 불균형 해소를 위해 compute_class_weight 기반 클래스 가중치(Class Weighting) 부여 학습
-- 평가: 불균형 데이터셋 검증을 위해 Macro F1-Score를 핵심 지표로 산출
-  
+- **개념 재정의** — 초기 라벨은 84.7%가 3점에 몰려 변별력이 없었고, 본문에
+  `급구`(0.06%) 같은 긴급성 어휘가 거의 없어 "시급성"을 그대로 복원할 수
+  없었습니다. 대신 실제로 관측 가능한 신호(접수 창 길이 · 모집 규모 · 즉시 입사
+  요구 · 결원 대체 · 마감 압박 · 보상 유인)만 묶어 **채용 적극성**으로 다시
+  정의했습니다.
+- **파이프라인** — 규칙 기반 라벨링(`urgency_rule.py`) → TF-IDF(1~2gram, 30,000)
+  → XGBoost → 클래스 확률의 기댓값 반올림
+- **평가 지표** — 라벨이 1~5 **순서형**이라 **QWK / MAE**를 주 지표로 씁니다.
+  "1점을 5점으로" 틀린 것과 "3점을 4점으로" 틀린 것을 같은 오류로 셀 수 없기
+  때문입니다. Macro F1은 초기 모델과의 비교용 보조 지표입니다.
 
-### 2-2. 채용 시급성 대시보드
+이 작업의 실제 내용은 성능을 올리는 것이 아니라 **점수가 무엇을 근거로 나왔는지
+말할 수 있게 만드는 것**이었습니다. 첫 모델의 높은 점수 상당 부분이 평가 설계에서
+나온 거품이었고, 통제를 넣어 걷어내고 나니 남은 문제는 모델이 아니라 **라벨**에
+있었습니다.
 
-**📂 폴더**: `02-urgency-score-analysis/2-2-urgency-dashboard`
+> 거품을 걷어낸 과정, 라벨 결함 두 가지의 실측 근거, 통제 실험 결과와 최종 성능은
+> [02 프로젝트 README](02-urgency-score-analysis/README.md)와
+> [2-1 README](02-urgency-score-analysis/2-1-urgency-prediction-model/README.md)에
+> 정리돼 있습니다.
 
-머신러닝 학습 없이, 사용자가 특정 기술 스택을 선택하면 해당 기술을 요구하는 채용 공고들의
-시급성 점수를 실시간으로 집계하여 평균 스코어와 점수 분포를 시각화하는 대시보드입니다.
+### 2-2. 공고 URL 분석 앱
 
-- 입력: 사용자가 선택한 기술 스택
-- 처리: 해당 기술을 포함하는 공고 필터링 → 시급성 점수 집계
-- 출력: 평균 시급성 스코어, 점수 분포 히스토그램 / 박스플롯
+**📂 폴더**: `02-urgency-score-analysis/2-2-urgency-app`
+
+채용공고 URL을 붙여넣으면 그 공고 한 건의 채용 적극성을 채점해 보여주는
+Streamlit 앱입니다.
+
+- **입력** — 잡코리아 · 사람인 · 원티드 공고 주소 (스크래핑이 막히면 본문 직접 붙여넣기)
+- **처리** — 사이트별 스크래핑 → 구조화 필드(시작일·마감일·모집인원)를 **학습 데이터와
+  같은 형식으로 재조립** → 규칙과 모델이 각각 채점
+- **출력** — 규칙 점수 · 모델 점수 · 채점 근거 문장 · 규칙이 실제로 읽은 원문
+
+**규칙이 주 결과, 모델은 두 번째 의견**입니다. 라벨이 규칙의 출력이므로, 규칙이
+계산 가능한 공고에서는 규칙이 정의상 정답이고 모델은 그 근사치입니다. 둘이 갈리면
+합치거나 평균 내지 않고 **갈렸다고 그대로** 보여줍니다.
+
+앱 안에 "어떻게 만들었나 / 한계와 개선점" 탭을 두어, 점수의 근거와 신뢰할 수 없는
+구간을 사용자가 화면에서 바로 확인할 수 있게 했습니다.
+
+> 사이트별 수집 경로, 스크래핑이 조용히 깨지는 지점과 대응은
+> [2-2 README](02-urgency-score-analysis/2-2-urgency-app/README.md) 참조.
 
 ---
 
@@ -158,7 +182,7 @@ LLM을 활용하여 이력서 내용을 분석하고, 지원하고자 하는 직
 
 ---
 
-## 🛠 기술 스택
+## 기술 스택
 
 | 구분 | 사용 기술 |
 |---|---|
@@ -176,17 +200,28 @@ LLM을 활용하여 이력서 내용을 분석하고, 지원하고자 하는 직
 
 ```
 it-job-analytics-hub/
-├── data/                                       # 원본/전처리 데이터
-├── notebooks/                                  # 탐색적 분석(EDA)
+├── data/                                # 원본/전처리 데이터 (용량이 커서 git 제외)
 ├── 01-tech-stack-wordcloud/
+│   ├── app.py
+│   └── requirements.txt
 ├── 02-urgency-score-analysis/
-│   ├── 2-1-urgency-prediction-model/
-│   └── 2-2-urgency-dashboard/
-├── 03-resume-job-matching/
-├── 04-resume-ai-feedback/
-├── requirements.txt
+│   ├── urgency_rule.py                  # 라벨 규칙 v3 — 규칙의 단일 출처
+│   ├── urgency_model.py                 # 모델 추론 인터페이스
+│   ├── 2-1-urgency-prediction-model/    # 학습 · 검증 스크립트, 모델, 실행 로그
+│   └── 2-2-urgency-app/
+│       ├── app.py
+│       ├── scraper.py                   # URL -> 학습 데이터 형식의 raw_text
+│       └── requirements.txt
+├── 03-resume-job-matching/              # 예정
+├── 04-resume-ai-feedback/               # 예정
+├── rescore_urgency.py                   # 라벨 규칙 v2 — v3이 무엇을 고쳤는지의 기준점
+├── requirements.txt                     # 전체 의존성 (앱 폴더에도 각각 있음)
 └── README.md
 ```
+
+> `requirements.txt`가 루트와 각 앱 폴더에 모두 있습니다. 루트 것은 저장소 전체를
+> 돌리기 위한 합집합이고, 앱 폴더 것은 그 앱에 필요한 것만 담고 있습니다
+> (Streamlit Community Cloud가 앱 파일과 같은 디렉터리의 파일을 먼저 찾기 때문입니다).
 
 ---
 
@@ -198,7 +233,31 @@ cd it-job-analytics-hub
 pip install -r requirements.txt
 ```
 
-각 하위 프로젝트 폴더 내 README를 참고하여 개별 실행하세요.
+Python 3.10 에서 개발·검증했습니다. 루트 `requirements.txt`는 저장소 전체의
+합집합이라 한 번 설치하면 아래 앱을 모두 실행할 수 있습니다.
+
+```bash
+# 1. 기술 스택 워드클라우드
+streamlit run 01-tech-stack-wordcloud/app.py
+
+# 2-2. 공고 URL 분석 앱
+streamlit run 02-urgency-score-analysis/2-2-urgency-app/app.py
+```
+
+앱 하나만 필요하다면 그 폴더의 `requirements.txt`를 쓰는 편이 가볍습니다.
+
+```bash
+cd 02-urgency-score-analysis/2-2-urgency-app
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+1번 앱의 지도 기능에는 카카오 API 키가 필요합니다. 루트에 `.env`를 만들고
+`KAKAO_API_KEY=...`를 넣으세요(키는 저장소에 포함되지 않습니다).
+
+2-1 모델을 직접 재학습하려면 `data/`의 원본 데이터셋이 필요합니다(용량 때문에
+저장소에 없습니다). 절차는
+[2-1 README](02-urgency-score-analysis/2-1-urgency-prediction-model/README.md)를 참고하세요.
 
 ---
 

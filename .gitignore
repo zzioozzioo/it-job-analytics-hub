@@ -1,8 +1,39 @@
+# =====================================================================
+# 커밋 원칙
+#   포함: 소스 · 문서 · 실행 로그(README가 인용하는 근거) · 앱 구동에 필요한 모델
+#   제외: 비밀키 · 원본 데이터 · 재현 가능한 대용량 파생물
+# =====================================================================
+
+# --- 비밀키 ---
 .env
-data/
+.streamlit/secrets.toml
+
+# --- 파이썬 ---
 __pycache__
-build_master_dataset.py
-kakao_coords_cache.json
-rescore_urgency.py
+*.pyc
+
+# --- 원본/가공 데이터셋 (수백 MB, HuggingFace에서 받는다) ---
+data/
+
+# --- 루트 작업 파일 ---
+/build_master_dataset.py
 임시/
-02-urgency-score-analysis/
+
+# =====================================================================
+# 02 · 채용 적극성 분석
+# =====================================================================
+# 스모크 실행 산출물 (정본을 덮지 않으려고 따로 떨어뜨린 것들)
+*_smoke/
+
+# 구 버전 모델 바이너리 — v1 / baseline / v2(transfer).
+# 15MB이고 스크립트로 재현 가능하다. 다만 각 디렉터리의 *_meta.json은 남긴다
+# (README가 인용하는 지표가 그 안에 들어 있고 몇 KB밖에 안 된다).
+#
+# ⚠️ models_v3/ 는 일부러 제외하지 않았다. data/ 가 빠져 있어서 클론한 사람은
+#    재학습을 할 수 없고, 모델이 없으면 앱이 규칙 전용으로만 돈다. 4.8MB다.
+02-urgency-score-analysis/2-1-urgency-prediction-model/models/*.joblib
+02-urgency-score-analysis/2-1-urgency-prediction-model/models_baseline/*.joblib
+02-urgency-score-analysis/2-1-urgency-prediction-model/models_transfer/*.joblib
+
+# unmeasurable 공고에 대한 모델 예측 덤프 (955KB, 파생물)
+02-urgency-score-analysis/2-1-urgency-prediction-model/models_transfer/unmeasurable_predictions.json

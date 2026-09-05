@@ -1,0 +1,41 @@
+# =====================================================================
+# IT Job Analytics Hub — 전체 의존성
+#
+# 이 파일 하나로 저장소의 모든 프로젝트를 돌릴 수 있습니다.
+# 특정 앱 하나만 필요하다면 그 폴더의 requirements.txt 를 쓰는 편이 가볍습니다.
+#   01-tech-stack-wordcloud/requirements.txt
+#   02-urgency-score-analysis/2-2-urgency-app/requirements.txt
+#
+# 하위 파일을 남겨둔 이유: Streamlit Community Cloud 가 앱 파일과 같은
+# 디렉터리의 requirements.txt 를 먼저 찾기 때문입니다. 배포 단위별로
+# 필요한 것만 설치되도록 분리해 두었습니다.
+#
+# 버전을 고정하지 않았습니다. 아래는 개발·검증에 실제로 쓴 조합입니다
+# (Python 3.10.20). 재현이 어긋나면 이 버전으로 맞춰 보세요.
+#   streamlit 1.62.0 · pandas 2.3.3 · numpy 2.2.6 · scipy 1.15.3
+#   scikit-learn 1.7.2 · xgboost 3.2.0 · joblib 1.5.3 · requests 2.34.2
+#   folium 0.20.0 · streamlit-folium 0.26.2 · matplotlib 3.10.9
+#   wordcloud 1.9.6 · python-dotenv 1.2.3 · huggingface_hub 1.28.0
+# =====================================================================
+
+# --- 공통 ---
+streamlit
+pandas
+numpy
+requests
+
+# --- 01 · 기술 스택 워드클라우드 ---
+# 지도 시각화에 folium, 워드클라우드 렌더링에 matplotlib 이 필요합니다.
+# 한글 폰트는 packages.txt 의 fonts-nanum 이 설치합니다(리눅스 배포 환경).
+folium
+streamlit-folium
+matplotlib
+wordcloud
+python-dotenv          # .env 의 KAKAO_API_KEY 로드
+
+# --- 02 · 채용 적극성 분석 ---
+scikit-learn
+xgboost
+joblib
+scipy                  # train_urgency_model.py(v1)의 희소 행렬 처리
+huggingface_hub        # data/ 가 없을 때 데이터셋을 내려받는 폴백 경로
