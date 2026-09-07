@@ -53,6 +53,9 @@ from xgboost import XGBClassifier
 
 sys.stdout.reconfigure(encoding='utf-8')
 
+HF_FILENAME_V2 = "master_merged_v2.json"
+HF_FILENAME_V3 = "master_merged_v3.json"
+
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))          # 02-urgency-score-analysis/
@@ -62,9 +65,9 @@ from urgency_rule import is_measurable, score_by_vocabulary  # noqa: E402
 from train_urgency_baseline import (N_CLASSES, RANDOM_STATE,  # noqa: E402
                                     Timer, build_tfidf, dedup_and_group,
                                     evaluate, make_transform, rule)
+from common.hf_data import fetch as hf_fetch  # noqa: E402
 
-DATA_V3 = HERE.parents[1] / "data" / "master_merged_v3.json"
-DATA_V2 = HERE.parents[1] / "data" / "master_merged_v2.json"
+DATA_V3 = HERE.parents[1] / "data" / HF_FILENAME_V3   # urgency_rule.py --write 산출물, 로컬 유지
 OUT_DIR = HERE / "models_v3"
 SMOKE_DIR = HERE / "models_v3_smoke"
 
@@ -86,8 +89,10 @@ def load_with_both_labels():
     df = df.rename(columns={'urgency_score': 'y_v3'})
     df['y_v3'] = df['y_v3'].astype(int)
 
-    with open(DATA_V2, encoding='utf-8') as f:
+    v2_path = hf_fetch(HF_FILENAME_V2)
+    with open(v2_path, encoding='utf-8') as f:
         v2 = {(r['source'], r['job_id']): r['urgency_score'] for r in json.load(f)}
+
     df['y_v2'] = [v2.get((s, j)) for s, j in zip(df['source'], df['job_id'])]
     missing = int(df['y_v2'].isna().sum())
     if missing:

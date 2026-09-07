@@ -16,6 +16,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from huggingface_hub import hf_hub_download
 from dotenv import load_dotenv
 
+import sys
+from pathlib import Path
+
+current_dir = Path(__file__).resolve().parent
+ROOT = current_dir.parent
+sys.path.insert(0, str(ROOT))
+from common.hf_data import fetch as hf_fetch  # noqa: E402
+
 # =========================================================
 # 0. 페이지 설정
 # =========================================================
@@ -310,30 +318,11 @@ NANUM_FONT_PATH = _nanum_font_path()
 # =========================================================
 # 1. 허깅페이스 데이터셋 로딩 (data/master_merged.json 대체)
 # =========================================================
-HF_REPO_ID = "data-craftee/korean-it-recruit-dataset"
-HF_FILENAME = "master_merged_v2.json"
-
-
-def _get_hf_token():
-    """Private 레포 대비 토큰 조회. Public 레포면 None이어도 정상 동작."""
-    token = os.environ.get("HF_TOKEN")
-    if token:
-        return token
-    try:
-        return st.secrets.get("HF_TOKEN", None)
-    except Exception:
-        return None
-
+HF_FILENAME_V2 = "master_merged_v2.json"
 
 @st.cache_data(show_spinner="허깅페이스에서 master_merged.json 다운로드 중...")
 def load_master_df():
-    token = _get_hf_token()
-    local_path = hf_hub_download(
-        repo_id=HF_REPO_ID,
-        filename=HF_FILENAME,
-        repo_type="dataset",
-        token=token,
-    )
+    local_path = hf_fetch(HF_FILENAME_V2) 
     with open(local_path, 'r', encoding='utf-8') as f:
         records = json.load(f)
     df = pd.DataFrame(records)

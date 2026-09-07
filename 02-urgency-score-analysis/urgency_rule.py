@@ -79,8 +79,11 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent                            # it-job-analytics-hub/
+sys.path.insert(0, str(ROOT))
+from common.hf_data import fetch as hf_fetch  # noqa: E402
+
 DATA_DIR = HERE.parent / "data"
-SRC_PATH = DATA_DIR / "master_merged.json"
 OUT_PATH = DATA_DIR / "master_merged_v3.json"
 
 RULE_VERSION = "v3"
@@ -401,12 +404,16 @@ def score_posting(raw_text: str, source: str = 'unknown') -> dict:
 # ---------------------------------------------------------------------------
 # 8. 라벨 재생성
 # ---------------------------------------------------------------------------
+HF_FILENAME = "master_merged.json"
+HF_FILENAME_V2 = "master_merged_v2.json"
+
 def main(write: bool):
     import json
     from collections import Counter
 
     sys.stdout.reconfigure(encoding='utf-8')
-    with open(SRC_PATH, encoding='utf-8') as f:
+    src_path = hf_fetch(HF_FILENAME)
+    with open(src_path, encoding='utf-8') as f:
         data = json.load(f)
 
     out = []
@@ -417,11 +424,9 @@ def main(write: bool):
         rec['urgency_reason'] = r['urgency_reason']
         out.append(rec)
 
-    v2_path = DATA_DIR / "master_merged_v2.json"
-    v2 = None
-    if v2_path.exists():
-        with open(v2_path, encoding='utf-8') as f:
-            v2 = {(r['source'], r['job_id']): r['urgency_score'] for r in json.load(f)}
+    v2_path = hf_fetch(HF_FILENAME_V2)
+    with open(v2_path, encoding='utf-8') as f:
+        v2 = {(r['source'], r['job_id']): r['urgency_score'] for r in json.load(f)}
 
     print("=" * 74)
     print(f"라벨 규칙 {RULE_VERSION} 재산출  (n={len(out):,})")
@@ -445,6 +450,7 @@ def main(write: bool):
             print(f"    {k[0]}점 -> {k[1]}점 : {v:>6,}")
 
     if write:
+        OUT_PATH.parent.mkdir(parents=True, exist_ok=True)   # data/ 폴더 없으면 생성
         with open(OUT_PATH, 'w', encoding='utf-8') as f:
             json.dump(out, f, ensure_ascii=False, indent=2)
         print(f"\n저장: {OUT_PATH}  ({len(out):,} rows)")
