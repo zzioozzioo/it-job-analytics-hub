@@ -61,7 +61,10 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))          # 02-urgency-score-analysis/
 sys.path.insert(0, str(HERE.parents[1]))      # repo root
 
-from urgency_rule import is_measurable, score_by_vocabulary  # noqa: E402
+from urgency_rule import (is_measurable, score_by_vocabulary, # noqa: E402
+                            structured_features, STRUCT_FEATURE_NAMES)
+from scipy.sparse import hstack, csr_matrix
+    
 from train_urgency_baseline import (N_CLASSES, RANDOM_STATE,  # noqa: E402
                                     Timer, build_tfidf, dedup_and_group,
                                     evaluate, make_transform, rule)
@@ -150,11 +153,22 @@ def make_split(meas):
     print(f"  공유 그룹 {len(shared)}개 {'(정상)' if not shared else '(!! 누출)'}")
     return meas, tr, va, te, dedup_stats
 
+def build_struct_matrix(df):
+    """structured_features를 이용해 sparse matrix를 만든다."""
+    feats = [structured_features(t, s) for t, s in zip(df['raw_text'], df['source'])]
+    arr = np.array([[f[k] for k in STRUCT_FEATURE_NAMES] for f in feats], dtype=float)
+    return csr_matrix(arr)
 
-def fit_models(txt_tr, ytr, txt_va, yva, args, tag, skip_xgb=None):
+def fit_models(txt_tr, ytr, txt_va, yva, args, tag, 
+                struct_tr=None, struct_va=None, skip_xgb=None):
     """(이름 -> 모델) 과 vectorizer. 예측은 호출부에서 필요한 만큼 한다."""
     skip = args.skip_xgb if skip_xgb is None else skip_xgb
     vec, Xtr, (Xva,), vs = build_tfidf(txt_tr, [txt_va], args.max_features)
+
+    if struct_tr is not None:
+        Xtr = hstack([Xtr, struct_tr]).tocsr()
+        Xva = hstack([Xva, struct_va]).tocsr()
+
     classes = np.unique(ytr)
     wmap = dict(zip(classes, compute_class_weight('balanced', classes=classes, y=ytr)))
     sw = np.array([wmap[y] for y in ytr])
@@ -230,8 +244,15 @@ def main():
     print("     v3은 validation으로 고르고, test는 마지막에 한 번만 본다.")
     print()
     y = {k: (d['y_v3'] - 1).to_numpy() for k, d in [('tr', tr), ('va', va), ('te', te)]}
-    models, vec = fit_models(txt['tr'], y['tr'], txt['va'], y['va'], args, 'A')
-    Xva, Xte = vec.transform(txt['va']), vec.transform(txt['te'])
+
+    struct_tr = build_struct_matrix(tr)
+    struct_va = build_struct_matrix(va)
+    struct_te = build_struct_matrix(te)
+
+    models, vec = fit_models(txt['tr'], y['tr'], txt['va'], y['va'], args, 'A', 
+                                struct_tr=struct_tr, struct_va=struct_va)
+    Xva = hstack([vec.transform(txt['va']), struct_va]).tocsr()
+    Xte = hstack([vec.transform(txt['te']), struct_te]).tocsr()
 
     print()
     print("  [validation] 모델 선택")
@@ -251,22 +272,35 @@ def main():
     print()
     loso = {}
     srcs = [s for s in meas['source'].unique() if (meas['source'] == s).sum() >= 500]
+
     for label_col in ['y_v2', 'y_v3']:
         loso[label_col] = {}
         print(f"  [{label_col[-2:]} 라벨]")
         for src in srcs:
             tr_m, te_m = meas['source'] != src, meas['source'] == src
+
+            struct_tr_sub = build_struct_matrix(meas.loc[tr_m])
+            struct_te_sub = build_struct_matrix(meas.loc[te_m])
+
             sub, sub_vec = fit_models(
                 conv(meas.loc[tr_m, 'raw_text'], meas.loc[tr_m, 'source']),
                 (meas.loc[tr_m, label_col] - 1).to_numpy(),
                 txt['va'], (va[label_col] - 1).to_numpy(),
-                args, f'B/{label_col[-2:]}/{src}', skip_xgb=True)
-            pred = sub['linear_svc'].predict(sub_vec.transform(
-                conv(meas.loc[te_m, 'raw_text'], meas.loc[te_m, 'source'])))
+                args, f'B/{label_col[-2:]}/{src}', 
+                struct_tr=struct_tr_sub, struct_va=struct_va,
+                skip_xgb=True)
+
+            Xte_sub = hstack([
+                sub_vec.transform(conv(meas.loc[te_m, 'raw_text'], meas.loc[te_m, 'source'])),
+                struct_te_sub
+            ]).tocsr()
+
+            pred = sub['linear_svc'].predict(Xte_sub)
             loso[label_col][src] = show(
                 f'-> {src} ({int(te_m.sum()):,}행)',
                 (meas.loc[te_m, label_col] - 1).to_numpy(), pred, '      ')
         print()
+        
     results['exp_b_loso'] = loso
 
     print("  === 전이 QWK 요약 ===")

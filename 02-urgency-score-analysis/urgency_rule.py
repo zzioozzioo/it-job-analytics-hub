@@ -406,7 +406,7 @@ def score_posting(raw_text: str, source: str = 'unknown') -> dict:
 # ---------------------------------------------------------------------------
 HF_FILENAME = "master_merged.json"
 HF_FILENAME_V2 = "master_merged_v2.json"
-
+HF_FILENAME_V3 = "master_merged_v3.json"
 def main(write: bool):
     import json
     from collections import Counter
@@ -458,6 +458,46 @@ def main(write: bool):
         print("\n(--write 를 붙이면 master_merged_v3.json 으로 저장됩니다)")
     return out
 
+# ---------------------------------------------------------------------------
+# 9. 모델용 구조화 피처 (라벨 계산과는 분리 — evidence 합계는 쓰지 않음)
+# ---------------------------------------------------------------------------
+def structured_features(raw_text: str, source: str = 'unknown') -> dict:
+    """TF-IDF 옆에 붙일 구조화 피처.
+
+    extract_signals()의 개별 신호 존재 여부만 가져오고, 가중치 합계(evidence)는
+    쓰지 않는다. evidence는 to_level()로 라벨을 직접 만드는 값이라, 그걸
+    피처로 넣으면 라벨 유출(label leakage)이 된다."""
+    body = clean_body(raw_text or '', source)
+    win, rolling = parse_application_window(body)
+
+    n_open = None
+    mh = RX_HEADCOUNT.search(body) or RX_HEADCOUNT_ALT.search(body)
+    if mh:
+        try:
+            n_open = int(mh.group(1))
+        except ValueError:
+            n_open = None
+
+    return {
+        'window_days': float(win) if win is not None else -1.0,
+        'window_missing': 1.0 if win is None else 0.0,
+        'rolling': 1.0 if rolling else 0.0,
+        'headcount': float(n_open) if n_open else -1.0,
+        'headcount_missing': 0.0 if n_open else 1.0,
+        'is_urgent_word': 1.0 if RX_URGENT.search(body) else 0.0,
+        'is_immediate': 1.0 if RX_IMMEDIATE.search(body) else 0.0,
+        'is_backfill': 1.0 if RX_BACKFILL.search(body) else 0.0,
+        'is_early_close': 1.0 if RX_EARLY_CLOSE.search(body) else 0.0,
+        'has_bonus': 1.0 if RX_BONUS.search(body) else 0.0,
+        'is_many': 1.0 if RX_MANY.search(body) else 0.0,
+    }
+
+
+STRUCT_FEATURE_NAMES = [
+    'window_days', 'window_missing', 'rolling', 'headcount', 'headcount_missing',
+    'is_urgent_word', 'is_immediate', 'is_backfill', 'is_early_close',
+    'has_bonus', 'is_many',
+]
 
 if __name__ == '__main__':
     main('--write' in sys.argv)
