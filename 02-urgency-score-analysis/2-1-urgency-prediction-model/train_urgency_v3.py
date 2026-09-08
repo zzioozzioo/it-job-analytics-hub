@@ -160,14 +160,22 @@ def build_struct_matrix(df):
     return csr_matrix(arr)
 
 def fit_models(txt_tr, ytr, txt_va, yva, args, tag, 
-                struct_tr=None, struct_va=None, skip_xgb=None):
-    """(이름 -> 모델) 과 vectorizer. 예측은 호출부에서 필요한 만큼 한다."""
-    skip = args.skip_xgb if skip_xgb is None else skip_xgb
-    vec, Xtr, (Xva,), vs = build_tfidf(txt_tr, [txt_va], args.max_features)
+                struct_tr=None, struct_va=None, skip_xgb=None, use_text=True):
+    """(이름 -> 모델) 과 vectorizer. 예측은 호출부에서 필요한 만큼 한다.
 
-    if struct_tr is not None:
-        Xtr = hstack([Xtr, struct_tr]).tocsr()
-        Xva = hstack([Xva, struct_va]).tocsr()
+    use_text=False면 TF-IDF를 아예 빼고 구조화 피처만 쓴다.
+    (구조화 피처가 순전히 규칙 재료를 재현하는 것인지 확인하는 ablation용)"""
+    skip = args.skip_xgb if skip_xgb is None else skip_xgb
+
+    if use_text:
+        vec, Xtr, (Xva,), vs = build_tfidf(txt_tr, [txt_va], args.max_features)
+        if struct_tr is not None:
+            Xtr = hstack([Xtr, struct_tr]).tocsr()
+            Xva = hstack([Xva, struct_va]).tocsr()
+    else:
+        vec = None
+        Xtr, Xva = struct_tr, struct_va
+        vs = 0.0          # ← 추가: TF-IDF 안 만드니 벡터화 시간은 0
 
     classes = np.unique(ytr)
     wmap = dict(zip(classes, compute_class_weight('balanced', classes=classes, y=ytr)))
@@ -178,7 +186,9 @@ def fit_models(txt_tr, ytr, txt_va, yva, args, tag,
         svc = LinearSVC(class_weight='balanced', C=1.0, max_iter=5000,
                         random_state=RANDOM_STATE).fit(Xtr, ytr)
     out['linear_svc'] = svc
-    print(f"    [{tag}] TF-IDF {Xtr.shape[1]:,}f ({vs:.1f}s) · linear_svc {t.cpu:.1f}s")
+    
+    feat_label = "TF-IDF" if use_text else "구조화"
+    print(f"    [{tag}] {feat_label} {Xtr.shape[1]:,}f ({vs:.1f}s) · linear_svc {t.cpu:.1f}s")
 
     if not skip:
         xgb = XGBClassifier(
@@ -219,6 +229,8 @@ def main():
     ap.add_argument('--n-estimators', type=int, default=400)
     ap.add_argument('--early-stopping', type=int, default=30)
     ap.add_argument('--skip-xgb', action='store_true')
+    ap.add_argument('--struct-only', action='store_true',
+                help='TF-IDF 없이 구조화 피처 11개만으로 학습 (ablation)')
     args = ap.parse_args()
     t_start = time.time()
 
@@ -288,12 +300,16 @@ def main():
                 txt['va'], (va[label_col] - 1).to_numpy(),
                 args, f'B/{label_col[-2:]}/{src}', 
                 struct_tr=struct_tr_sub, struct_va=struct_va,
-                skip_xgb=True)
+                skip_xgb=True,
+                use_text=not args.struct_only)
 
-            Xte_sub = hstack([
-                sub_vec.transform(conv(meas.loc[te_m, 'raw_text'], meas.loc[te_m, 'source'])),
-                struct_te_sub
-            ]).tocsr()
+            if args.struct_only:
+                Xte_sub = struct_te_sub
+            else:
+                Xte_sub = hstack([
+                    sub_vec.transform(conv(meas.loc[te_m, 'raw_text'], meas.loc[te_m, 'source'])),
+                    struct_te_sub
+                ]).tocsr()
 
             pred = sub['linear_svc'].predict(Xte_sub)
             loso[label_col][src] = show(
