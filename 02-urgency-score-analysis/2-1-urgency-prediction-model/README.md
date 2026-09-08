@@ -241,6 +241,20 @@ v2 라벨 재현치가 이 문서 위쪽 표(0.0603 / 0.0372)와 소수점 셋�
 - **상수 베이스라인을 MAE 최소 상수로.** v2는 "항상 3점"과 비교했는데, 그건 MAE를
   최소화하는 상수가 아니라 모델에 유리한 기준이었다. v3은 train 중앙값을 쓴다.
 
+### 곁가지 — 구조화 피처를 넣어보고 되돌린 것
+
+규칙이 이미 뽑아주는 개별 신호 11개(`window_days`·`headcount`·`is_urgent_word` …)를
+TF-IDF 옆에 붙이면 cross-source 전이 QWK가 0.1309 → 0.6757로 뛴다. 넣지 않았다.
+
+**11개가 전부 `mask_text()`가 지우는 구간에서 나오는 값이다.** 위 통제 사다리에서
+Macro F1 0.1301을 내주고 세운 마스킹 통제를, 이 피처가 그대로 되돌린다. 상승분은
+일반화가 아니라 되돌아온 누출이다. 게다가 모델이 정작 필요한 unmeasurable 구간에서는
+이 피처들이 **94.1%가 전부 0**이라(피처 벡터 15종뿐) 아무것도 주지 못한다.
+
+그래서 `--struct` / `--struct-only` 실험 플래그 뒤에 두고, 결과는
+`models_v3_struct/`에 저장한다. 정본 `models_v3/`는 통제가 걸린 모델로 유지된다.
+실측 표와 마스킹 패턴 대조는 [02 README](../README.md)의 "곁가지 — 구조화 피처" 절에 있다.
+
 ### v3에서 못 고친 것
 
 - **어휘 폴백은 그대로 두었다.** v3 라벨 위에서 다시 재도 상수보다 MAE가 나쁘다
@@ -255,6 +269,7 @@ v2 라벨 재현치가 이 문서 위쪽 표(0.0603 / 0.0372)와 소수점 셋�
 
 **모델**
 - `models_v3/` — **현재 최종 모델**. v3 라벨, measurable 학습, 기댓값 예측
+- `models_v3_struct/` — 구조화 피처 실험 산출물. **배포용이 아니다** (아래 참조)
 - `models_transfer/` — v2 최종 모델 (비교 기준으로 보존)
 - `models_baseline/` — 통제 조건 4종 비교용. 전체 데이터 학습
 - `models/` — v1 (참고용, 거품 포함)
@@ -280,8 +295,12 @@ v2 라벨 재현치가 이 문서 위쪽 표(0.0603 / 0.0372)와 소수점 셋�
 ```bash
 # v3 (현재)
 python ../urgency_rule.py --write   # 라벨 재생성
-python train_urgency_v3.py          # 학습 + v2 대비 전이 비교 (약 11분)
+python train_urgency_v3.py          # 학습 + v2 대비 전이 비교 (약 11분) -> models_v3/
 python compare_v2_v3.py             # 상수 대비 재측정 (약 1분)
+
+# 구조화 피처 실험 (배포용 아님, models_v3_struct/ 로 나간다)
+python train_urgency_v3.py --struct       # TF-IDF + 구조화 피처
+python train_urgency_v3.py --struct-only  # 전이를 구조화 피처만으로 (ablation)
 
 # v2 (보존용 재현)
 python train_urgency_baseline.py --skip-xgb    # 통제 조건 비교 (수 초)

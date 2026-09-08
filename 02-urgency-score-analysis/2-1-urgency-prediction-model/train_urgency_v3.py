@@ -32,9 +32,23 @@ train_urgency_transfer.py는 EXP-A의 모델을 **test QWK로** 골랐다
 예측 방식(argmax vs 기댓값 반올림)도 validation에서 정한다.
 
 실행:
-  python train_urgency_v3.py                # 전체 (약 15분)
+  python train_urgency_v3.py                # 전체 (약 15분) — 정본 models_v3/
   python train_urgency_v3.py --skip-xgb     # 선형만 (수십 초, 스모크)
   python train_urgency_v3.py --sample 8000  # 축소
+  python train_urgency_v3.py --struct       # [실험] 구조화 피처 추가
+  python train_urgency_v3.py --struct-only  # [실험] 전이를 구조화 피처만으로
+
+---------------------------------------------------------------------------
+--struct 를 기본값으로 켜지 않는 이유
+---------------------------------------------------------------------------
+구조화 피처 11개는 전부 mask_text()가 지우는 구간에서 나온다
+(`window_days` <- `접수기간…`, `is_urgent_word` <- `급구|긴급채용`, ...).
+붙이는 순간 masked+clean 통제가 무효가 되고, 전이 QWK가 0.1309 -> 0.6757로
+뛰지만 그건 통제가 걷어냈던 누출이 되돌아온 것이다. 규칙을 선형모델로
+재현한 것이지 일반화가 아니다(2-1/02 README의 ablation 참조).
+
+그래서 실험 플래그로만 두고, 켜면 결과를 models_v3_struct/ 에 저장한다.
+앱이 로드하는 정본 models_v3/ 는 통제가 걸린 모델로 유지된다.
 """
 
 import argparse
@@ -71,8 +85,9 @@ from train_urgency_baseline import (N_CLASSES, RANDOM_STATE,  # noqa: E402
 from common.hf_data import fetch as hf_fetch  # noqa: E402
 
 DATA_V3 = HERE.parents[1] / "data" / HF_FILENAME_V3   # urgency_rule.py --write 산출물, 로컬 유지
-OUT_DIR = HERE / "models_v3"
-SMOKE_DIR = HERE / "models_v3_smoke"
+OUT_DIR = HERE / "models_v3"                 # 정본 — 2-2 앱이 로드하는 모델
+SMOKE_DIR = HERE / "models_v3_smoke"         # 축소 실행 (정본을 덮지 않는다)
+STRUCT_DIR = HERE / "models_v3_struct"       # 구조화 피처 실험 (정본을 덮지 않는다)
 
 VARIANT = 'masked+clean'
 TEST_FOLDS = 5
@@ -154,10 +169,18 @@ def make_split(meas):
     return meas, tr, va, te, dedup_stats
 
 def build_struct_matrix(df):
-    """structured_features를 이용해 sparse matrix를 만든다."""
+    """structured_features를 이용해 sparse matrix를 만든다.
+
+    ⚠️ 기본 학습 경로에서는 쓰지 않는다. `--struct` / `--struct-only`를
+    줬을 때만 붙는다. 이유는 main()의 STEP 3 주석 참조."""
     feats = [structured_features(t, s) for t, s in zip(df['raw_text'], df['source'])]
     arr = np.array([[f[k] for k in STRUCT_FEATURE_NAMES] for f in feats], dtype=float)
     return csr_matrix(arr)
+
+
+def stack(X, struct):
+    """구조화 피처가 있으면 옆에 붙이고, 없으면 그대로 둔다."""
+    return X if struct is None else hstack([X, struct]).tocsr()
 
 def fit_models(txt_tr, ytr, txt_va, yva, args, tag, 
                 struct_tr=None, struct_va=None, skip_xgb=None, use_text=True):
@@ -169,9 +192,7 @@ def fit_models(txt_tr, ytr, txt_va, yva, args, tag,
 
     if use_text:
         vec, Xtr, (Xva,), vs = build_tfidf(txt_tr, [txt_va], args.max_features)
-        if struct_tr is not None:
-            Xtr = hstack([Xtr, struct_tr]).tocsr()
-            Xva = hstack([Xva, struct_va]).tocsr()
+        Xtr, Xva = stack(Xtr, struct_tr), stack(Xva, struct_va)
     else:
         vec = None
         Xtr, Xva = struct_tr, struct_va
@@ -187,7 +208,8 @@ def fit_models(txt_tr, ytr, txt_va, yva, args, tag,
                         random_state=RANDOM_STATE).fit(Xtr, ytr)
     out['linear_svc'] = svc
     
-    feat_label = "TF-IDF" if use_text else "구조화"
+    feat_label = ("TF-IDF+구조화" if struct_tr is not None else "TF-IDF") \
+        if use_text else "구조화"
     print(f"    [{tag}] {feat_label} {Xtr.shape[1]:,}f ({vs:.1f}s) · linear_svc {t.cpu:.1f}s")
 
     if not skip:
@@ -229,9 +251,14 @@ def main():
     ap.add_argument('--n-estimators', type=int, default=400)
     ap.add_argument('--early-stopping', type=int, default=30)
     ap.add_argument('--skip-xgb', action='store_true')
+    ap.add_argument('--struct', action='store_true',
+                    help='[실험] TF-IDF 옆에 구조화 피처 11개를 붙인다. '
+                         '기본값 꺼짐 — 켜면 models_v3_struct/ 에 저장된다')
     ap.add_argument('--struct-only', action='store_true',
-                help='TF-IDF 없이 구조화 피처 11개만으로 학습 (ablation)')
+                    help='[실험] EXP-B(전이)를 TF-IDF 없이 구조화 피처 11개만으로 '
+                         '돌리는 ablation. --struct 를 함께 켠 것으로 취급한다')
     args = ap.parse_args()
+    use_struct = args.struct or args.struct_only
     t_start = time.time()
 
     meas, unmeas = load_with_both_labels()
@@ -257,14 +284,24 @@ def main():
     print()
     y = {k: (d['y_v3'] - 1).to_numpy() for k, d in [('tr', tr), ('va', va), ('te', te)]}
 
-    struct_tr = build_struct_matrix(tr)
-    struct_va = build_struct_matrix(va)
-    struct_te = build_struct_matrix(te)
+    # 구조화 피처는 기본값에서 끈다(--struct 로만 켠다).
+    # 11개 전부가 mask_text()가 지우는 구간에서 나오는 값이라, 붙이는 순간
+    # masked+clean 통제(2-1 README: Macro F1 -0.1301을 치르고 세운 것)가
+    # 무효가 된다. 실험은 아래 EXP-B에서만 의미가 있고, 여기서 켜면 앱이
+    # 쓰는 정본 모델이 통제 없는 모델로 바뀐다.
+    if use_struct:
+        struct_tr = build_struct_matrix(tr)
+        struct_va = build_struct_matrix(va)
+        struct_te = build_struct_matrix(te)
+        print(f"  [!] --struct: 구조화 피처 {len(STRUCT_FEATURE_NAMES)}개 사용 "
+              f"(라벨 누출 있음 · 저장 위치 {STRUCT_DIR.name}/)")
+    else:
+        struct_tr = struct_va = struct_te = None
 
-    models, vec = fit_models(txt['tr'], y['tr'], txt['va'], y['va'], args, 'A', 
-                                struct_tr=struct_tr, struct_va=struct_va)
-    Xva = hstack([vec.transform(txt['va']), struct_va]).tocsr()
-    Xte = hstack([vec.transform(txt['te']), struct_te]).tocsr()
+    models, vec = fit_models(txt['tr'], y['tr'], txt['va'], y['va'], args, 'A',
+                             struct_tr=struct_tr, struct_va=struct_va)
+    Xva = stack(vec.transform(txt['va']), struct_va)
+    Xte = stack(vec.transform(txt['te']), struct_te)
 
     print()
     print("  [validation] 모델 선택")
@@ -291,14 +328,17 @@ def main():
         for src in srcs:
             tr_m, te_m = meas['source'] != src, meas['source'] == src
 
-            struct_tr_sub = build_struct_matrix(meas.loc[tr_m])
-            struct_te_sub = build_struct_matrix(meas.loc[te_m])
+            if use_struct:
+                struct_tr_sub = build_struct_matrix(meas.loc[tr_m])
+                struct_te_sub = build_struct_matrix(meas.loc[te_m])
+            else:
+                struct_tr_sub = struct_te_sub = None
 
             sub, sub_vec = fit_models(
                 conv(meas.loc[tr_m, 'raw_text'], meas.loc[tr_m, 'source']),
                 (meas.loc[tr_m, label_col] - 1).to_numpy(),
                 txt['va'], (va[label_col] - 1).to_numpy(),
-                args, f'B/{label_col[-2:]}/{src}', 
+                args, f'B/{label_col[-2:]}/{src}',
                 struct_tr=struct_tr_sub, struct_va=struct_va,
                 skip_xgb=True,
                 use_text=not args.struct_only)
@@ -306,10 +346,9 @@ def main():
             if args.struct_only:
                 Xte_sub = struct_te_sub
             else:
-                Xte_sub = hstack([
-                    sub_vec.transform(conv(meas.loc[te_m, 'raw_text'], meas.loc[te_m, 'source'])),
-                    struct_te_sub
-                ]).tocsr()
+                Xte_sub = stack(sub_vec.transform(
+                    conv(meas.loc[te_m, 'raw_text'], meas.loc[te_m, 'source'])),
+                    struct_te_sub)
 
             pred = sub['linear_svc'].predict(Xte_sub)
             loso[label_col][src] = show(
@@ -369,16 +408,26 @@ def main():
 
     # -----------------------------------------------------------------------
     rule("STEP 7. 저장")
-    out = SMOKE_DIR if (args.sample or args.skip_xgb) else OUT_DIR
+    if args.sample or args.skip_xgb:
+        out = SMOKE_DIR
+        note = "축소 실행이므로"
+    elif use_struct:
+        out = STRUCT_DIR
+        note = "구조화 피처 실험이므로 (정본 models_v3/ 은 건드리지 않는다)"
+    else:
+        out, note = OUT_DIR, None
     out.mkdir(parents=True, exist_ok=True)
-    if out is SMOKE_DIR:
-        print(f"  [!] 축소 실행이므로 {out.name}/ 에 저장")
+    if note:
+        print(f"  [!] {note} {out.name}/ 에 저장")
     joblib.dump(best, out / "urgency_model.joblib")
     joblib.dump(vec, out / "urgency_tfidf.joblib")
     (out / "model_meta.json").write_text(json.dumps({
         'rule_version': 'v3',
         'data': DATA_V3.name,
         'variant': VARIANT,
+        # 추론 쪽(urgency_model.py)이 같은 피처 행렬을 다시 만들려면 이 목록이
+        # 필요하다. null 이면 TF-IDF만 쓴 정본 모델이라는 뜻.
+        'struct_features': STRUCT_FEATURE_NAMES if use_struct else None,
         'model': best_name,
         'prediction': mode,
         'model_selection': 'validation QWK (test는 최종 1회만)',

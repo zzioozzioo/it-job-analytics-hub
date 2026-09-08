@@ -21,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "2-1-urgency-prediction-model"))
 
-from urgency_rule import is_measurable  # noqa: E402
+from urgency_rule import is_measurable, structured_features  # noqa: E402
 from train_urgency_baseline import make_transform  # noqa: E402
 
 MODEL_DIR = HERE / "2-1-urgency-prediction-model" / "models_v3"
@@ -44,11 +44,38 @@ class UrgencyModel:
         self.meta = json.loads((model_dir / "model_meta.json").read_text(encoding='utf-8'))
         self.mode = self.meta.get('prediction', 'argmax')
         self._transform = make_transform(VARIANT)
+        # 정본(models_v3/)은 None = TF-IDF만. models_v3_struct/ 처럼 구조화
+        # 피처를 붙여 학습한 모델을 가리키면 이름 목록이 들어 있고, 추론에서도
+        # 같은 순서로 다시 만들어 붙여야 한다. 없으면 차원이 어긋나 죽는다.
+        self.struct_names = self.meta.get('struct_features') or None
 
     def _matrix(self, texts, sources):
         texts = pd.Series(list(texts))
         sources = pd.Series(list(sources), index=texts.index)
-        return self.vec.transform(self._transform(texts, sources))
+        X = self.vec.transform(self._transform(texts, sources))
+        if self.struct_names:
+            from scipy.sparse import csr_matrix, hstack   # 필요할 때만 (앱 의존성 최소화)
+            feats = [structured_features(t, s) for t, s in zip(texts, sources)]
+            arr = np.array([[f[k] for k in self.struct_names] for f in feats],
+                           dtype=float)
+            X = hstack([X, csr_matrix(arr)]).tocsr()
+        self._check_dims(X)
+        return X
+
+    def _check_dims(self, X):
+        """피처 차원이 학습 때와 다르면 조용히 틀린 점수를 내지 말고 바로 멈춘다.
+
+        `--struct`로 학습한 모델을 정본 자리에 두는 등 짝이 어긋나는 사고가
+        실제로 가능한 배선이라, 원인을 지목하는 메시지를 남긴다."""
+        expected = getattr(self.model, 'n_features_in_', None)
+        if expected is not None and X.shape[1] != expected:
+            raise ValueError(
+                f"피처 차원 불일치: 모델은 {expected:,}개를 기대하는데 "
+                f"{X.shape[1]:,}개가 만들어졌습니다.\n"
+                f"  model_meta.json의 struct_features = {self.struct_names}\n"
+                f"  구조화 피처를 쓴 모델(models_v3_struct/)과 안 쓴 모델"
+                f"(models_v3/)이 섞였을 가능성이 큽니다. "
+                f"2-1에서 다시 학습해 저장하세요.")
 
     def predict(self, texts, sources):
         """1~5 점수."""

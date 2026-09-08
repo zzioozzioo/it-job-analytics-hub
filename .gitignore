@@ -35,5 +35,13 @@ data/
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_baseline/*.joblib
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_transfer/*.joblib
 
+# 구조화 피처 실험(`train_urgency_v3.py --struct`) 산출물.
+# 라벨 누출이 있는 모델이라 배포하면 안 된다. meta만 남겨 실험 기록으로 쓴다.
+02-urgency-score-analysis/2-1-urgency-prediction-model/models_v3_struct/*.joblib
+
 # unmeasurable 공고에 대한 모델 예측 덤프 (955KB, 파생물)
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_transfer/unmeasurable_predictions.json
+
+# --- 로컬 전용 ---
+# Claude Code 세션 지침. 팀원과 공유하려면 이 줄을 지울 것.
+CLAUDE.md
