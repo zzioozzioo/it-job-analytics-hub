@@ -36,8 +36,20 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding='utf-8')
 
 DATA_DIR = Path(__file__).parent / "data"
-SRC_PATH = DATA_DIR / "master_merged.json"
+SRC_PATH = DATA_DIR / "master_merged.json"      # 있으면 우선 사용
 OUT_PATH = DATA_DIR / "master_merged_v2.json"
+
+
+def src_path():
+    """원본 경로. 로컬에 없으면 허깅페이스에서 받아온다(`common/hf_data.py`).
+
+    이 파일은 v2 규칙의 보존본이라 로직은 건드리지 않지만, 데이터 경로만은
+    저장소 공통 경로를 따른다 — `data/`가 없는 새 클론에서도 돌아야 한다."""
+    if SRC_PATH.exists():
+        return SRC_PATH
+    sys.path.insert(0, str(Path(__file__).parent))
+    from common.hf_data import fetch
+    return Path(fetch(SRC_PATH.name))
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +310,7 @@ def build_reason(level, reasons, measurable, source):
 # 5. 실행
 # ---------------------------------------------------------------------------
 def main(write: bool):
-    with open(SRC_PATH, encoding='utf-8') as f:
+    with open(src_path(), encoding='utf-8') as f:
         data = json.load(f)
 
     enriched = []
@@ -389,6 +401,7 @@ def main(write: bool):
             break
 
     if write:
+        OUT_PATH.parent.mkdir(parents=True, exist_ok=True)   # data/ 없으면 생성
         with open(OUT_PATH, 'w', encoding='utf-8') as f:
             json.dump(out, f, ensure_ascii=False, indent=2)
         print()

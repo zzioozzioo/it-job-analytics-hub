@@ -42,10 +42,9 @@ sys.path.insert(0, str(HERE.parent))
 
 from urgency_rule import is_measurable  # noqa: E402
 from train_urgency_baseline import (RANDOM_STATE, build_tfidf,  # noqa: E402
-                                    evaluate, make_transform, rule)
+                                    data_path, evaluate, make_transform, rule)
 
-DATA_V3 = HERE.parents[1] / "data" / "master_merged_v3.json"
-DATA_V2 = HERE.parents[1] / "data" / "master_merged_v2.json"
+DATA_V3 = HERE.parents[1] / "data" / "master_merged_v3.json"   # --write 산출물, 로컬
 VARIANT = 'masked+clean'
 MAX_FEATURES = 30000
 
@@ -56,7 +55,7 @@ def load():
     df['raw_text'] = df['raw_text'].fillna('').astype(str)
     df['source'] = df['source'].fillna('unknown').astype(str)
     df = df.rename(columns={'urgency_score': 'y_v3'})
-    with open(DATA_V2, encoding='utf-8') as f:
+    with open(data_path(), encoding='utf-8') as f:
         v2 = {(r['source'], r['job_id']): r['urgency_score'] for r in json.load(f)}
     df['y_v2'] = [v2.get((s, j)) for s, j in zip(df['source'], df['job_id'])]
     df = df[df['y_v2'].notna()].copy()
