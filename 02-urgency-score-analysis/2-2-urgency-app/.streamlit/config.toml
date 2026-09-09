@@ -1,0 +1,24 @@
+# =====================================================================
+# 채용 적극성 분석기 — 테마 설정
+#
+# 1번 프로젝트(01-tech-stack-wordcloud)와 같은 팔레트를 쓴다.
+# 두 앱이 한 대시보드의 서로 다른 화면처럼 보여야 하기 때문이다.
+#
+# ⚠️ primaryColor를 바꾸면 app.py 상단의 PRIMARY 상수도 같이 바꿀 것.
+#    점수 카드·뱃지 색이 이 값에서 파생된다.
+# =====================================================================
+
+[theme]
+base = "light"
+
+primaryColor = "#2563EB"              # Blue 600
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5F9"  # Slate 100
+textColor = "#0F172A"                 # Slate 900
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+runOnSave = true

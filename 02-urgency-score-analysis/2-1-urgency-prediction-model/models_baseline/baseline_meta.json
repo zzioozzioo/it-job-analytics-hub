@@ -1,0 +1,358 @@
+{
+  "script": "train_urgency_baseline.py",
+  "data": {
+    "source": "C:\\code\\it-job-analytics-hub\\data\\master_merged_v2.json",
+    "sample": null,
+    "rows_before": 40348,
+    "rows_after": 38830,
+    "exact_dup_rows_removed": 1518,
+    "n_groups": 37872,
+    "grouped_rows": 1730
+  },
+  "split": {
+    "strategy": "StratifiedGroupKFold (group = 앞 600자 해시)",
+    "train": 24809,
+    "val": 6271,
+    "test": 7750,
+    "shared_groups_train_test": 0
+  },
+  "selection": {
+    "variant": "masked+clean",
+    "model": "xgboost_es",
+    "criterion": "QWK on masked+clean test",
+    "note": "test는 최종 평가 1회만 사용 (v1의 test 기반 선택 문제 회피)"
+  },
+  "metrics": {
+    "primary": "qwk / mae (순서형)",
+    "secondary": "macro_f1 / accuracy"
+  },
+  "results": [
+    {
+      "qwk": 0.0,
+      "mae": 0.896258064516129,
+      "off_by_1": 0.8418064516129032,
+      "macro_f1": 0.10013542271232348,
+      "accuracy": 0.3339354838709677,
+      "model": "dummy_major",
+      "variant": "full",
+      "note": "최빈 클래스 고정",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": -0.020216809797958257,
+      "mae": 1.2593548387096773,
+      "off_by_1": 0.6473548387096775,
+      "macro_f1": 0.1977244923268128,
+      "accuracy": 0.25083870967741934,
+      "model": "dummy_prior",
+      "variant": "full",
+      "note": "사전분포 무작위",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": 0.3999813923619415,
+      "mae": 0.7678709677419355,
+      "off_by_1": 0.867225806451613,
+      "macro_f1": 0.26925611287987106,
+      "accuracy": 0.4166451612903226,
+      "model": "source_only",
+      "variant": "full",
+      "note": "source별 최빈 클래스",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": 0.8098753959741769,
+      "mae": 0.2903225806451613,
+      "off_by_1": 0.9268387096774193,
+      "macro_f1": 0.7474577688920572,
+      "accuracy": 0.7984516129032259,
+      "model": "linear_svc",
+      "variant": "full",
+      "note": "TF-IDF 선형 SVM",
+      "fit_sec": 5.1,
+      "cpu_sec": 5.0
+    },
+    {
+      "qwk": 0.7684190377227571,
+      "mae": 0.3656774193548387,
+      "off_by_1": 0.9003870967741936,
+      "macro_f1": 0.7062862119727715,
+      "accuracy": 0.7539354838709678,
+      "model": "logreg",
+      "variant": "full",
+      "note": "TF-IDF 로지스틱",
+      "fit_sec": 13.4,
+      "cpu_sec": 13.0
+    },
+    {
+      "qwk": 0.9034564117614172,
+      "mae": 0.1630967741935484,
+      "off_by_1": 0.9603870967741935,
+      "macro_f1": 0.8459149895798393,
+      "accuracy": 0.8794838709677419,
+      "model": "xgboost_es",
+      "variant": "full",
+      "note": "early stop @ 267/400 trees",
+      "fit_sec": 1926.9,
+      "cpu_sec": 8361.2,
+      "best_iteration": 267
+    },
+    {
+      "qwk": 0.0,
+      "mae": 0.896258064516129,
+      "off_by_1": 0.8418064516129032,
+      "macro_f1": 0.10013542271232348,
+      "accuracy": 0.3339354838709677,
+      "model": "dummy_major",
+      "variant": "masked",
+      "note": "최빈 클래스 고정",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": -0.020216809797958257,
+      "mae": 1.2593548387096773,
+      "off_by_1": 0.6473548387096775,
+      "macro_f1": 0.1977244923268128,
+      "accuracy": 0.25083870967741934,
+      "model": "dummy_prior",
+      "variant": "masked",
+      "note": "사전분포 무작위",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": 0.3999813923619415,
+      "mae": 0.7678709677419355,
+      "off_by_1": 0.867225806451613,
+      "macro_f1": 0.26925611287987106,
+      "accuracy": 0.4166451612903226,
+      "model": "source_only",
+      "variant": "masked",
+      "note": "source별 최빈 클래스",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": 0.7505225168061749,
+      "mae": 0.41303225806451616,
+      "off_by_1": 0.9070967741935484,
+      "macro_f1": 0.6529650326392099,
+      "accuracy": 0.6963870967741935,
+      "model": "linear_svc",
+      "variant": "masked",
+      "note": "TF-IDF 선형 SVM",
+      "fit_sec": 5.0,
+      "cpu_sec": 4.9
+    },
+    {
+      "qwk": 0.7162040824271791,
+      "mae": 0.47651612903225804,
+      "off_by_1": 0.883483870967742,
+      "macro_f1": 0.6287838206048344,
+      "accuracy": 0.6645161290322581,
+      "model": "logreg",
+      "variant": "masked",
+      "note": "TF-IDF 로지스틱",
+      "fit_sec": 12.1,
+      "cpu_sec": 11.6
+    },
+    {
+      "qwk": 0.8131755275263753,
+      "mae": 0.3273548387096774,
+      "off_by_1": 0.9349677419354838,
+      "macro_f1": 0.7158215274200262,
+      "accuracy": 0.748,
+      "model": "xgboost_es",
+      "variant": "masked",
+      "note": "early stop @ 335/400 trees",
+      "fit_sec": 3018.5,
+      "cpu_sec": 11533.9,
+      "best_iteration": 335
+    },
+    {
+      "qwk": 0.0,
+      "mae": 0.896258064516129,
+      "off_by_1": 0.8418064516129032,
+      "macro_f1": 0.10013542271232348,
+      "accuracy": 0.3339354838709677,
+      "model": "dummy_major",
+      "variant": "clean",
+      "note": "최빈 클래스 고정",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": -0.020216809797958257,
+      "mae": 1.2593548387096773,
+      "off_by_1": 0.6473548387096775,
+      "macro_f1": 0.1977244923268128,
+      "accuracy": 0.25083870967741934,
+      "model": "dummy_prior",
+      "variant": "clean",
+      "note": "사전분포 무작위",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": 0.3999813923619415,
+      "mae": 0.7678709677419355,
+      "off_by_1": 0.867225806451613,
+      "macro_f1": 0.26925611287987106,
+      "accuracy": 0.4166451612903226,
+      "model": "source_only",
+      "variant": "clean",
+      "note": "source별 최빈 클래스",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": 0.8317150324704202,
+      "mae": 0.268,
+      "off_by_1": 0.9335483870967742,
+      "macro_f1": 0.7612901168603607,
+      "accuracy": 0.8072258064516129,
+      "model": "linear_svc",
+      "variant": "clean",
+      "note": "TF-IDF 선형 SVM",
+      "fit_sec": 3.2,
+      "cpu_sec": 3.0
+    },
+    {
+      "qwk": 0.7994815773337142,
+      "mae": 0.32903225806451614,
+      "off_by_1": 0.9104516129032258,
+      "macro_f1": 0.7323012237358129,
+      "accuracy": 0.7710967741935484,
+      "model": "logreg",
+      "variant": "clean",
+      "note": "TF-IDF 로지스틱",
+      "fit_sec": 9.1,
+      "cpu_sec": 9.0
+    },
+    {
+      "qwk": 0.8941829933505705,
+      "mae": 0.17187096774193547,
+      "off_by_1": 0.9547096774193549,
+      "macro_f1": 0.8425907257719342,
+      "accuracy": 0.8770322580645161,
+      "model": "xgboost_es",
+      "variant": "clean",
+      "note": "early stop @ 353/400 trees",
+      "fit_sec": 1168.6,
+      "cpu_sec": 16490.0,
+      "best_iteration": 353
+    },
+    {
+      "qwk": 0.0,
+      "mae": 0.896258064516129,
+      "off_by_1": 0.8418064516129032,
+      "macro_f1": 0.10013542271232348,
+      "accuracy": 0.3339354838709677,
+      "model": "dummy_major",
+      "variant": "masked+clean",
+      "note": "최빈 클래스 고정",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": -0.020216809797958257,
+      "mae": 1.2593548387096773,
+      "off_by_1": 0.6473548387096775,
+      "macro_f1": 0.1977244923268128,
+      "accuracy": 0.25083870967741934,
+      "model": "dummy_prior",
+      "variant": "masked+clean",
+      "note": "사전분포 무작위",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": 0.3999813923619415,
+      "mae": 0.7678709677419355,
+      "off_by_1": 0.867225806451613,
+      "macro_f1": 0.26925611287987106,
+      "accuracy": 0.4166451612903226,
+      "model": "source_only",
+      "variant": "masked+clean",
+      "note": "source별 최빈 클래스",
+      "fit_sec": 0.0,
+      "cpu_sec": 0.0
+    },
+    {
+      "qwk": 0.739486338222801,
+      "mae": 0.4421935483870968,
+      "off_by_1": 0.9116129032258065,
+      "macro_f1": 0.6121891477162852,
+      "accuracy": 0.6645161290322581,
+      "model": "linear_svc",
+      "variant": "masked+clean",
+      "note": "TF-IDF 선형 SVM",
+      "fit_sec": 2.1,
+      "cpu_sec": 2.0
+    },
+    {
+      "qwk": 0.703273189464575,
+      "mae": 0.5089032258064516,
+      "off_by_1": 0.8873548387096775,
+      "macro_f1": 0.5847121152243838,
+      "accuracy": 0.6307096774193548,
+      "model": "logreg",
+      "variant": "masked+clean",
+      "note": "TF-IDF 로지스틱",
+      "fit_sec": 4.8,
+      "cpu_sec": 5.1
+    },
+    {
+      "qwk": 0.7838944990240777,
+      "mae": 0.3744516129032258,
+      "off_by_1": 0.9365161290322581,
+      "macro_f1": 0.6619582341853473,
+      "accuracy": 0.7046451612903226,
+      "model": "xgboost_es",
+      "variant": "masked+clean",
+      "note": "early stop @ 297/400 trees",
+      "fit_sec": 1274.1,
+      "cpu_sec": 13919.0,
+      "best_iteration": 297
+    }
+  ],
+  "per_source": {
+    "jobkorea": {
+      "qwk": 0.7310116931671935,
+      "mae": 0.5794392523364486,
+      "off_by_1": 0.8721101819970487,
+      "macro_f1": 0.5929475205587623,
+      "accuracy": 0.5863256271519921
+    },
+    "saramin": {
+      "qwk": 0.7284721503416967,
+      "mae": 0.33774038461538464,
+      "off_by_1": 0.953926282051282,
+      "macro_f1": 0.7066210656527103,
+      "accuracy": 0.7171474358974359
+    },
+    "wanted": {
+      "qwk": 0.7086570477247504,
+      "mae": 0.05241379310344828,
+      "off_by_1": 0.9972413793103448,
+      "macro_f1": 0.7754293140258053,
+      "accuracy": 0.9503448275862069
+    }
+  },
+  "v1_comparison": {
+    "v1_macro_f1": 0.8595385511993088,
+    "v2_full_macro_f1": 0.8459149895798393,
+    "v2_masked_macro_f1": 0.7158215274200262
+  },
+  "label_mapping": "model class i -> urgency_score i+1",
+  "known_issues": [
+    "라벨은 rescore_urgency.py의 결정론적 규칙 f(raw_text)다. masked 조건이 실제 성능에 가깝다.",
+    "source가 라벨 규칙과 결합돼 있어 source_only baseline과 반드시 같이 볼 것.",
+    "보조 피처 미포함 (v1의 test 기반 선택 문제로 제외).",
+    "보일러플레이트(사이트 템플릿) 제거 미적용 - 개선 2번 항목."
+  ]
+}

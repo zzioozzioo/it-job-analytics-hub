@@ -1,0 +1,29 @@
+{
+  "hf_repo_id": "data-craftee/korean-it-recruit-dataset",
+  "hf_filename": "master_merged_v2.json",
+  "n_rows": 40348,
+  "use_aux_features": true,
+  "aux_columns": [
+    "n_hard_skills",
+    "n_soft_skills",
+    "n_preferences",
+    "n_culture_keywords",
+    "n_final_techs",
+    "n_skills_total",
+    "len_raw_text",
+    "n_lines",
+    "n_digits"
+  ],
+  "macro_f1": 0.8595385511993088,
+  "macro_f1_text_only": 0.8568330655441475,
+  "macro_f1_with_aux": 0.8595385511993088,
+  "class_weights": {
+    "1": 0.936680208937899,
+    "2": 0.6248161053039102,
+    "3": 0.6565239499644056,
+    "4": 2.293285968028419,
+    "5": 2.683125519534497
+  },
+  "label_mapping": "model class i -> urgency_score i+1",
+  "aux_scaler": "aux_scaler.joblib"
+}
