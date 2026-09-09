@@ -35,7 +35,6 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-DATA_DIR = Path(__file__).parent / "data"
 # 파일명 규약은 common/hf_data 가 정한다. 여기서 문자열을 다시 쓰지 않는다.
 from common.hf_data import MASTER, MASTER_V2, local_path   # noqa: E402
 

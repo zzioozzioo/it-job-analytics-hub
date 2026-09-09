@@ -11,7 +11,7 @@
 - [프로젝트 개요](#프로젝트-개요)
 - [전체 아키텍처](#전체-아키텍처)
 - [1. 기술 스택 통계](#1-기술-스택-통계)
-- [2. 채용 시급성 감성 분석](#2-채용-시급성-감성-분석)
+- [2. 채용 적극성 분석](#2-채용-적극성-분석)
   - [2-1. 채용 적극성 예측 모델](#2-1-채용-적극성-예측-모델)
   - [2-2. 공고 URL 분석 앱](#2-2-공고-url-분석-앱)
 - [3. 이력서 기반 공고 추천](#3-이력서-기반-공고-추천)
@@ -32,10 +32,14 @@
 이를 구직자 관점의 실용적 도구(공고 추천, 이력서 첨삭)로 확장하는 것을 목표로 합니다.
 
 ### 데이터 소스
-- 수집 대상: 사람인 / 잡코리아 / 점핏
-- 수집 기간: 2026.06. ~ 2026.07 (약 4주)
-- 데이터 규모: 약 8만건의 IT 관련 직군 채용 공고
+- 수집 대상: 사람인 / 잡코리아 / **원티드**
+- 수집 기간: 2026.06. ~ 2026.07 (본문 마감일 분포와 일치 — 2026-06 4,064건 · 07 3,149건 · 08 365건)
+- 데이터 규모: **40,348건** (사람인 25,950 · 잡코리아 10,025 · 원티드 4,373)
 - 수집 방식: Requests / BeautifulSoup 크롤링
+
+> 이 저장소의 문서는 어림수를 쓰지 않습니다. 처음에는 "약 8만건 / 점핏"으로
+> 적혀 있었는데, 실측하니 40,348건이었고 세 번째 소스는 점핏이 아니라
+> 원티드였습니다. 이후 모든 수치는 직접 재서 씁니다.
 
 ### 프로젝트 구성 한눈에 보기
 
@@ -94,16 +98,21 @@
 
 ---
 
-## 2. 채용 시급성 감성 분석
+## 2. 채용 적극성 분석
 
 **📂 폴더**: `02-urgency-score-analysis`
 
-공고 본문에서 핵심 역량, 우대사항, 사내 문화 관련 문장을 구조화하여 추출하고, 이를 바탕으로
-"채용의 시급성"을 정량적인 점수로 산출합니다. 
-<br>
-시급성의 신호로는 예를 들어
-반복 채용 여부, 모집 마감 임박 표현, 우대사항의 유연성,
-급여/복지 강조 정도 등을 활용할 수 있습니다.
+공고 본문에서 **채용 적극성**을 1~5점으로 산출합니다.
+
+> **처음에는 "채용 시급성"이었습니다.** 반복 채용 여부·우대사항의 유연성·급여
+> 강조 정도 같은 신호를 쓸 계획이었는데, 본문을 실측하니 `급구`가 0.06%,
+> `충원/결원`이 0.62%뿐이라 **시급성을 복원할 수 없었습니다.** 그래서 실제로
+> 관측되는 것(접수 창 길이 · 모집 규모 · 즉시 입사 요구 · 결원 대체 · 마감 압박 ·
+> 보상 유인)만 묶어 개념을 다시 정의했습니다. 폴더명 `urgency`는 그때 흔적입니다.
+
+라벨 규칙은 현재 **v4**이고, 규칙·모델·앱이 [`urgency_rule.py`](02-urgency-score-analysis/urgency_rule.py)
+하나를 공유합니다. 규칙이 무엇을 세 번 고쳤고 무엇을 못 고쳤는지는
+[02 README](02-urgency-score-analysis/README.md)에 있습니다.
 
 ### 2-1. 채용 적극성 예측 모델
 
@@ -189,10 +198,18 @@ LLM을 활용하여 이력서 내용을 분석하고, 지원하고자 하는 직
 | 언어 | Python |
 | 크롤링 | Requests, BeautifulSoup |
 | 데이터 처리 | Pandas, NumPy |
-| 텍스트 마이닝 | (예: KoNLPy, scikit-learn TF-IDF) |
-| 머신러닝 | (예: scikit-learn, XGBoost) |
-| 시각화 | Streamlit, WordCloud  |
-| AI/LLM | OpenAI API |
+| 텍스트 마이닝 | scikit-learn TF-IDF (1~2gram, 30,000) |
+| 머신러닝 | scikit-learn (LinearSVC · LogReg), XGBoost |
+| 시각화 | Streamlit, WordCloud, Matplotlib |
+| 데이터 배포 | HuggingFace Datasets (`data-craftee/korean-it-recruit-dataset`) |
+| AI/LLM | 미정 — 04번 착수 시 결정 |
+
+> 한국어 형태소 분석기(KoNLPy·Kiwi·Mecab)는 **쓰지 않았습니다.** 어절 단위
+> 토큰이라 `학력은`/`학력이`가 별개 피처가 됩니다. 도입하면 개선 여지가 있다는
+> 것까지만 확인했고 실제로 넣지는 않았습니다.
+>
+> LLM은 루트 README에 `OpenAI API`로 적혀 있었지만 04번이 미착수라 확정된 바가
+> 없습니다. 첨삭 품질을 무엇으로 평가할지도 아직 정하지 못했습니다.
 
 ---
 
@@ -205,16 +222,24 @@ it-job-analytics-hub/
 │   ├── app.py
 │   └── requirements.txt
 ├── 02-urgency-score-analysis/
-│   ├── urgency_rule.py                  # 라벨 규칙 v3 — 규칙의 단일 출처
-│   ├── urgency_model.py                 # 모델 추론 인터페이스
+│   ├── urgency_rule.py                  # 라벨 규칙 v4 — 규칙의 단일 출처
+│   ├── test_urgency_rule.py             # 규칙 회귀 테스트 (pytest 불필요)
+│   ├── urgency_model.py                 # 모델 추론 인터페이스 (models_v4/)
 │   ├── 2-1-urgency-prediction-model/    # 학습 · 검증 스크립트, 모델, 실행 로그
+│   │   ├── train_urgency.py             #   현행 학습 (--v4 로 라운드 선택)
+│   │   ├── compare_labels.py            #   상수 베이스라인 대비 라벨 비교
+│   │   └── calibrate_fallback.py        #   어휘 폴백 재보정 근거
 │   └── 2-2-urgency-app/
 │       ├── app.py
 │       ├── scraper.py                   # URL -> 학습 데이터 형식의 raw_text
+│       ├── build_reference_stats.py     # 앱이 쓰는 분포 파일 재생성
 │       └── requirements.txt
-├── 03-resume-job-matching/              # 예정
+├── 03-resume-job-matching/              # 진행 중 (스킬 매칭 브리프 · 사람인 백필)
 ├── 04-resume-ai-feedback/               # 예정
-├── rescore_urgency.py                   # 라벨 규칙 v2 — v3이 무엇을 고쳤는지의 기준점
+├── common/
+│   ├── hf_data.py                       # 데이터 접근 단일 출처 (로컬 우선)
+│   └── tech_normalize.py                # 기술명 정규화 단일 출처
+├── rescore_urgency.py                   # 라벨 규칙 v2 — 이후 버전의 비교 기준
 ├── requirements.txt                     # 전체 의존성 (앱 폴더에도 각각 있음)
 └── README.md
 ```
@@ -255,8 +280,19 @@ streamlit run app.py
 1번 앱의 지도 기능에는 카카오 API 키가 필요합니다. 루트에 `.env`를 만들고
 `KAKAO_API_KEY=...`를 넣으세요(키는 저장소에 포함되지 않습니다).
 
-2-1 모델을 직접 재학습하려면 `data/`의 원본 데이터셋이 필요합니다(용량 때문에
-저장소에 없습니다). 절차는
+데이터셋은 `data/`에 없으면 **`data/` 안으로 자동 다운로드**됩니다
+(`common/hf_data.py`). 별도 캐시를 쓰지 않으므로 같은 파일이 두 벌 쌓이지
+않습니다. 다만 라벨 파일 `master_merged_v4.json`은 규칙의 산출물이라,
+없으면 만드는 명령을 안내합니다.
+
+```bash
+# 라벨 재생성 -> 규칙 회귀 테스트 -> 재학습
+python 02-urgency-score-analysis/urgency_rule.py --write
+python 02-urgency-score-analysis/test_urgency_rule.py
+cd 02-urgency-score-analysis/2-1-urgency-prediction-model && python train_urgency.py --v4
+```
+
+절차와 근거는
 [2-1 README](02-urgency-score-analysis/2-1-urgency-prediction-model/README.md)를 참고하세요.
 
 ---
