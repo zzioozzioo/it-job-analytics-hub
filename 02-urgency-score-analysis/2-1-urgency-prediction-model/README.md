@@ -6,36 +6,47 @@ IT 채용공고 본문에서 **채용 적극성**(마감 임박도·모집 규�
 
 ---
 
-## 최종 모델
+## 최종 모델 (v4)
 
 | 항목 | 값 |
 |---|---|
-| 알고리즘 | XGBoost (`multi:softmax`, early stopping @ 256/400) |
+| 알고리즘 | XGBoost (`multi:softmax`, early stopping) |
 | 피처 | TF-IDF 1~2gram, 30,000 |
 | 텍스트 조건 | `masked+clean` (라벨 산출 구간 제거 + 사이트 템플릿 제거) |
-| 학습 데이터 | measurable 공고 19,428행 (val 4,863 / test 6,106) |
-| 예측 방식 | 클래스 확률의 **기댓값 반올림** |
-| 파일 | `models_transfer/transfer_model.joblib` |
+| 라벨 | **v4** (`master_merged_v4.json`) |
+| 학습 데이터 | measurable, test 6,056행 |
+| 예측 방식 | 클래스 확률의 **기댓값 반올림** (validation에서 확정) |
+| 파일 | `models_v4/urgency_model.joblib` |
 
-### 성능 (measurable hold-out 6,106행)
+### 성능 (measurable hold-out 6,056행, 최종 1회 평가)
 
-| 지표 | 값 |
-|---|---|
-| **QWK** (주 지표) | **0.7874** |
-| **MAE** | **0.4291** |
-| 인접 오차 내 정확도 (±1점) | **96.4%** |
-| Macro F1 | 0.5563 |
-| Accuracy | 0.6097 |
+| 지표 | 상수(2점) | **v4 모델** |
+|---|---|---|
+| **MAE** (주 지표) | 0.4747 | **0.3131** (−34.0%) |
+| **QWK** (주 지표) | 0.0000 | **0.6098** |
+| 인접 오차 내 정확도 (±1점) | 97.66% | **98.89%** |
+| Macro F1 | — | 0.5136 |
+| Accuracy | — | 0.6990 |
 
-라벨이 1~5 순서형이므로 QWK와 MAE를 주 지표로 삼았다. "1점을 5점으로" 틀린 것과 "3점을 4점으로" 틀린 것은 같은 오류가 아니다. **예측의 96.4%가 실제 값의 ±1점 안에 들어온다.**
+라벨이 1~5 순서형이므로 QWK와 MAE를 주 지표로 삼았다. "1점을 5점으로" 틀린 것과
+"3점을 4점으로" 틀린 것은 같은 오류가 아니다. **예측의 98.9%가 실제 값의 ±1점
+안에 들어온다.**
+
+> ⚠️ **아래 문서에 나오는 v1/v2/v3 수치와 이 표를 직접 비교하지 말 것.**
+> 라벨 버전이 다르면 타깃 자체가 달라 난이도가 다르다. 특히 v2의 QWK 0.7874가
+> 지금보다 높아 보이는데, 그건 v2 jobkorea 라벨이 4·5점에 45% 퍼져 있어(=
+> 크롤링 시점이 섞여 있어) 분리하기 쉬웠던 탓이 크다. 비교가 가능한 것은
+> 조건을 고정한 전이 실험(`compare_labels.py`)뿐이다.
+>
+> 이전 버전 모델은 비교용으로 보존돼 있다 — `models_v3/`(v3), `models_transfer/`(v2).
 
 ### 적용 범위 — 반드시 지킬 것
 
-**✅ 쓸 수 있는 곳**: 본문에 마감일·접수기간·모집인원 같은 채용 메타데이터가 있는 공고 (`rescore_urgency.is_measurable()`이 True)
+**✅ 쓸 수 있는 곳**: 본문에 마감일·접수기간·모집인원 같은 채용 메타데이터가 있는 공고 (`urgency_rule.is_measurable()`이 True)
 
 **❌ 쓰면 안 되는 곳**:
 - 메타데이터가 없는 공고 (전체의 24.2%) — 아래 "한계" 참조
-- 학습에 없던 채용 사이트 — cross-source 전이가 실패한다 (QWK 0.04)
+- 학습에 없던 채용 사이트 — cross-source 전이가 실패한다 (v4에서도 상수보다 MAE가 나쁘다, 아래 참조)
 
 > **먼저 규칙을 고려할 것.** 메타데이터가 있는 공고라면 `rescore_urgency.py`를
 > 그대로 돌리는 편이 낫다. 라벨 자체가 그 규칙의 출력이므로 규칙은 정의상 정답을 주고,
@@ -148,14 +159,14 @@ measurable hold-out을 "메타데이터 없는 상태"로 두고, 같은 정답 
 ## v3 — 라벨을 고치고 다시 잰 것
 
 위의 "근본 원인"이 라벨이라고 지목했으니, 라벨을 고치고 그 진단이 맞았는지 확인했다.
-규칙은 [`../urgency_rule.py`](../urgency_rule.py), 학습은 `train_urgency_v3.py`.
+규칙은 [`../urgency_rule.py`](../urgency_rule.py), 학습은 `train_urgency.py`.
 
 ### 무엇을 고쳤나
 
 | | 내용 | 실측 |
 |---|---|---|
 | 수정 1 | jobkorea가 모집인원을 `○○`로 가려서, 옆의 **지원자 수**가 모집인원으로 읽히던 버그 | 4,165행에서 발생. measurable의 11.4%가 등급 오류 (`4→2점` 1,487건) |
-| 수정 2 | 마감 신호를 **접수 창 길이**(마감일−시작일)로 소스 통합. jobkorea가 쓰던 `남은기간`은 크롤링 시점에 의존하는 값이라 폐기 | 라벨 5,694행(14.1%) 변경 |
+| 수정 2 | 마감 신호를 **접수 창 길이**(마감일−시작일)로 소스 통합. jobkorea가 쓰던 `남은기간`은 크롤링 시점에 의존하는 값이라 폐기 | 라벨 5,683행(14.1%) 변경 |
 
 `남은기간`이 문제였던 이유가 핵심이다. 그건 공고의 속성이 아니라 **내가 언제 봤는가**의
 속성이다. 하루 뒤에 크롤링하면 라벨이 달라진다. 반면 접수 창 길이는 두 소스에서
@@ -169,6 +180,12 @@ measurable hold-out을 "메타데이터 없는 상태"로 두고, 같은 정답 
 | v3 | 5.4% | 2.0% | **2.7배** |
 
 같은 개념이라면 나올 수 없는 격차였다.
+
+> ⚠️ **v4에서 이 2.7배가 5.2배로 벌어진다.** `채용 시 마감`의 이중 계상을 걷어내니
+> saramin 상위 비율이 2.0% → 0.9%로 내려갔다. 즉 2.7배의 일부는 양쪽 소스에
+> 똑같이 걸려 있던 버그가 떠받치고 있었다. 아래 성능 수치는 전부 v3 라벨 기준이며
+> 재학습 전까지 유효하다. 근거는 [02 README](../README.md)의 "라벨 규칙 v4에서
+> 고친 것" 절.
 
 ### 진단이 맞았나 — cross-source 전이
 
@@ -189,12 +206,13 @@ v2 라벨 재현치가 이 문서 위쪽 표(0.0603 / 0.0372)와 소수점 셋�
 여기서 멈추면 과장이 된다. QWK만 보고 "좋아졌다"고 하면 안 되는 이유가 있다 —
 **QWK도 MAE도 라벨 분포에 의존**하는데 v2와 v3은 분포가 다르다. 그래서 각 라벨
 세트에 **자기 상수 베이스라인**(train 라벨 중앙값)을 깔고 그 대비로 다시 쟀다
-(`compare_v2_v3.py`).
+(`compare_labels.py`).
 
 | 라벨 | 상수 대비 MAE 개선 | QWK |
 |---|---|---|
 | v2 | +16.6% | 0.0529 |
 | v3 | **−30.1%** | 0.1307 |
+| v4 | **−29.6%** | 0.1689 |
 
 **v3 전이 모델은 "항상 2점 찍기"보다 MAE가 나쁘다.**
 `class_weight='balanced'` 탓인가 싶어 가중치 없는 모델도 같이 돌렸는데 −26.3%로 같았다.
@@ -206,6 +224,10 @@ v2 라벨 재현치가 이 문서 위쪽 표(0.0603 / 0.0372)와 소수점 셋�
 정리하면 라벨 수정은 전이를 **"사실상 무작위"(QWK 0.05)에서 "약한 신호는 있음"(QWK 0.13)**
 으로 옮겼다. **"쓸 수 있음"으로는 옮기지 못했다.** 학습에 없던 사이트에 이 모델을
 쓰지 말라는 결론은 v2와 같다.
+
+**v4에서도 같다.** QWK는 0.1689로 조금 더 올랐지만 상수 대비 MAE는 −29.6%로
+제자리다(v3 −30.1%). 라벨을 두 번 고쳐 순서 정보는 늘렸어도, 전이의 점 예측은
+여전히 상수만 못하다.
 
 ### 최종 모델 (in-domain)
 
@@ -259,9 +281,17 @@ Macro F1 0.1301을 내주고 세운 마스킹 통제를, 이 피처가 그대로
 
 - **어휘 폴백은 그대로 두었다.** v3 라벨 위에서 다시 재도 상수보다 MAE가 나쁘다
   (2.0093 vs 1.1924). 대체할 검증된 방법이 없어서 남겼다.
+  → **v4에서 재보정했다.** 새 신호 없이 기준점·보폭만 바꿔(`3 + 가산` →
+  `2 + 가산 × 0.25`) hold-out MAE 2.0591 → 0.6932, QWK 0.0874 → 0.2674.
+  현행을 두 지표 모두에서 이긴다. 다만 **여전히 상수를 MAE로 이기지 못하고**,
+  적용 구간의 83.3%는 어휘 신호가 0이라 사실상 상수다.
+  근거: `calibrate_fallback.py`, [02 README](../README.md) '[수정 4]'.
 - **`채용 시 마감`이 두 신호에 중복 계상된다.** rolling(+10)과 조기마감(+12)에
   모두 걸려 한 문구로 22점이다. v2도 saramin에서 그랬고, 가중치를 손대면 위의
   v2 대비 비교가 오염되므로 이번 라운드에서는 두었다.
+  → **v4에서 고쳤다.** measurable의 9.3%에서 발동하고 있었고 1,993행(6.5%)의
+  등급이 내려갔다. v2 대비 비교가 끝나 보류 사유가 사라졌기 때문이다.
+  아직 재학습하지 않았으므로 `models_v3/`와 아래 성능 수치는 v3 라벨 기준이다.
 
 ---
 
@@ -281,26 +311,40 @@ Macro F1 0.1301을 내주고 세운 마스킹 통제를, 이 피처가 그대로
 - `train_urgency_model.py` — v1
 - `train_urgency_baseline.py` — 통제 조건 그리드 (`full`/`masked`/`clean`/`masked+clean`) + 베이스라인 사다리
 - `train_urgency_transfer.py` — v2 최종 설계. EXP-A(in-domain) / B(전이) / C(폴백 대체) / D(적용)
-- `train_urgency_v3.py` — **v3 학습**. 같은 행·같은 split에서 라벨만 v2/v3로 바꿔 전이 비교
-- `compare_v2_v3.py` — 상수 베이스라인 대비로 v2/v3 전이를 다시 재기 (분포 차이 상쇄)
+- `train_urgency.py` — **현행 학습 스크립트.** 같은 행·같은 split에서 라벨만 바꿔
+  전이를 비교한다. 기본값은 v2↔v3, `--v4`를 주면 v3↔v4 (→ `models_v4/`)
+- `compare_labels.py` — 상수 베이스라인 대비로 전이를 다시 재기 (분포 차이 상쇄).
+  `--v4`로 v3↔v4
+- `calibrate_fallback.py` — 어휘 폴백 재보정 (v4 [수정 4]의 근거)
 - `finalize_model.py` — argmax vs 기댓값 예측 비교, 최종 확정
 - `boilerplate.py` — 사이트 템플릿 제거
 - `check_label_leakage.py` — 라벨 누출 진단
 - `check_source_boilerplate.py` — 템플릿 제거 검증 (source 분류 정확도로 측정)
 
-**로그**: `full_run_baseline.log`, `full_run_clean.log`, `full_run_transfer.log`, `full_run_v3.log`
+**로그**: `full_run_baseline.log`, `full_run_clean.log`, `full_run_transfer.log`,
+`full_run_v3.log`, `full_run_v4.log`
+
+**그 외**
+- `../test_urgency_rule.py` — 규칙 회귀 테스트 16종 (pytest 불필요)
+- `../2-2-urgency-app/build_reference_stats.py` — 앱이 쓰는 분포 파일 재생성.
+  라벨을 다시 만들면 이것도 함께 돌릴 것
+
+> 파일명에 버전을 넣은 스크립트(`train_urgency_model`=v1, `train_urgency_transfer`=v2)는
+> **그 버전 전용으로 얼린 것**이고, 버전이 없는 것(`train_urgency`, `compare_labels`)은
+> 라운드를 플래그로 받는 현행 스크립트다. 전에는 `train_urgency_v3.py`가 v4까지
+> 학습해서 이름과 내용이 어긋나 있었다.
 
 ## 재현
 
 ```bash
 # v3 (현재)
 python ../urgency_rule.py --write   # 라벨 재생성
-python train_urgency_v3.py          # 학습 + v2 대비 전이 비교 (약 11분) -> models_v3/
-python compare_v2_v3.py             # 상수 대비 재측정 (약 1분)
+python train_urgency.py          # 학습 + v2 대비 전이 비교 (약 11분) -> models_v3/
+python compare_labels.py             # 상수 대비 재측정 (약 1분)
 
 # 구조화 피처 실험 (배포용 아님, models_v3_struct/ 로 나간다)
-python train_urgency_v3.py --struct       # TF-IDF + 구조화 피처
-python train_urgency_v3.py --struct-only  # 전이를 구조화 피처만으로 (ablation)
+python train_urgency.py --struct       # TF-IDF + 구조화 피처
+python train_urgency.py --struct-only  # 전이를 구조화 피처만으로 (ablation)
 
 # v2 (보존용 재현)
 python train_urgency_baseline.py --skip-xgb    # 통제 조건 비교 (수 초)
@@ -318,7 +362,7 @@ python predict_urgency.py                      # v2 자기검증
 - 학습·평가 모두 데이터 스냅샷 기준이다(v3은 `master_merged_v3.json`). 공고가
   갱신되면 재학습이 필요하다.
 - 라벨 버전이 다른 모델의 in-domain 지표는 서로 비교할 수 없다. 비교하려면
-  `compare_v2_v3.py`처럼 다른 조건을 고정하고 상수 베이스라인 대비로 봐야 한다.
+  `compare_labels.py`처럼 다른 조건을 고정하고 상수 베이스라인 대비로 봐야 한다.
 - 단일 hold-out으로 측정했다. 교차검증 기반 신뢰구간은 없다.
 - 보조 피처(리스트 컬럼 개수·본문 길이)는 제외했다. v1이 그 채택 여부를 test로
   결정해 test contamination이 있었고, validation 기반 재선택은 하지 않았다.
