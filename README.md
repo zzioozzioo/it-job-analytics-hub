@@ -10,17 +10,10 @@
 
 - [프로젝트 개요](#프로젝트-개요)
 - [전체 아키텍처](#전체-아키텍처)
-<<<<<<< HEAD
-- [1. IT 기술 스택 통계](#1-IT-기술-스택-통계-it-tech-stack-word-cloud)
-- [2. 채용 시급성 감성 분석](#2-채용-시급성-감성-분석-urgency-score-analysis)
-  - [2-1. 채용 시급성 예측 모델](#2-1-채용-시급성-예측-모델)
-  - [2-2. 채용 시급성 대시보드](#2-2-채용-시급성-대시보드)
-=======
 - [1. 기술 스택 통계](#1-기술-스택-통계)
 - [2. 채용 적극성 분석](#2-채용-적극성-분석)
   - [2-1. 채용 적극성 예측 모델](#2-1-채용-적극성-예측-모델)
   - [2-2. 공고 URL 분석 앱](#2-2-공고-url-분석-앱)
->>>>>>> project02
 - [3. 이력서 기반 공고 추천](#3-이력서-기반-공고-추천)
 - [4. 이력서 맞춤형 AI 첨삭](#4-이력서-맞춤형-ai-첨삭)
 - [기술 스택](#기술-스택)
@@ -33,11 +26,6 @@
 ## 프로젝트 개요
 
 ### 배경 및 동기
-<<<<<<< HEAD
-
-
-=======
->>>>>>> project02
 채용 공고는 단순한 구인 정보를 넘어, 시장이 지금 어떤 기술을 원하는지, 어떤 기업이 얼마나
 간절하게 인재를 찾고 있는지를 보여주는 데이터입니다. 본 프로젝트는 IT 채용 공고 텍스트를
 정량·정성적으로 분석하여 기술 트렌드, 채용 시급성이라는 두 축의 인사이트를 도출하고,
@@ -58,13 +46,8 @@
 | 폴더명 | 내용 | 학습 여부 |
 |---|---|---|
 | 📂`01-tech-stack-wordcloud` | 기술 스택 상위 50개 추출 및 연관 워드클라우드 시각화 | X |
-<<<<<<< HEAD
-| 📂`02-urgency-score-analysis/2-1-urgency-prediction` | 텍스트 마이닝 기반 채용 시급성 ML 예측 모델 | O |
-| 📂`02-urgency-score-analysis/2-2-urgency-dashboard` | 기술 스택별 채용 공고 시급성 점수 실시간 집계 대시보드 | X |
-=======
 | 📂`02-urgency-score-analysis/2-1-urgency-prediction-model` | 채용 적극성(1~5점) 예측 모델 — TF-IDF + XGBoost | O |
 | 📂`02-urgency-score-analysis/2-2-urgency-app` | 공고 URL을 붙여넣으면 채용 적극성을 채점하는 Streamlit 앱 | X |
->>>>>>> project02
 | 📂`03-resume-job-matching` | 이력서 기반 채용 공고 추천 | O |
 | 📂`04-resume-ai-feedback` | 이력서 맞춤형 AI 첨삭 | - (LLM 활용) |
 
@@ -81,13 +64,8 @@
         ├──▶ [1] 기술 스택 추출 → 워드클라우드 시각화
         │
         ├──▶ [2] 핵심역량/우대사항/사내문화 구조화
-<<<<<<< HEAD
-        │         ├──▶ [2-1] 시급성 예측 모델 학습
-        │         └──▶ [2-2] 기술 스택별 시급성 대시보드
-=======
         │         ├──▶ [2-1] 적극성 예측 모델 학습
         │         └──▶ [2-2] 공고 URL 분석 앱
->>>>>>> project02
         │
         ├──▶ [3] 이력서 ↔ 공고 매칭 추천
         │
@@ -136,32 +114,6 @@
 하나를 공유합니다. 규칙이 무엇을 세 번 고쳤고 무엇을 못 고쳤는지는
 [02 README](02-urgency-score-analysis/README.md)에 있습니다.
 
-<<<<<<< HEAD
-### 2-1. 채용 시급성 예측 모델
-
-**📂 폴더**: `02-urgency-score-analysis/2-1-urgency-prediction-model`
-
-텍스트 마이닝 기법과 머신러닝 모델링을 결합하여, 공고 텍스트로부터 채용 시급성 점수를
-정량적으로 예측하는 지도학습 기반 시스템입니다.
-
-- 1차 라벨링: LM Studio를 통해 공고 텍스트로부터 초기 1~5점 시급성 스코어 및 사유 생성
-- 2차 라벨 보정: HARD_RULES, SOFT_RULES 키워드 패턴을 적용해 라벨 정밀 보정
-- 피처 엔지니어링: 정제된 공고 본문을 TfidfVectorizer로 수치적 벡터화 및 n-gram 피처 추출
-- 모델링: XGBoost Classifier 활용 및 극심한 클래스 불균형 해소를 위해 compute_class_weight 기반 클래스 가중치(Class Weighting) 부여 학습
-- 평가: 불균형 데이터셋 검증을 위해 Macro F1-Score를 핵심 지표로 산출
-  
-
-### 2-2. 채용 시급성 대시보드
-
-**📂 폴더**: `02-urgency-score-analysis/2-2-urgency-dashboard`
-
-머신러닝 학습 없이, 사용자가 특정 기술 스택을 선택하면 해당 기술을 요구하는 채용 공고들의
-시급성 점수를 실시간으로 집계하여 평균 스코어와 점수 분포를 시각화하는 대시보드입니다.
-
-- 입력: 사용자가 선택한 기술 스택
-- 처리: 해당 기술을 포함하는 공고 필터링 → 시급성 점수 집계
-- 출력: 평균 시급성 스코어, 점수 분포 히스토그램 / 박스플롯
-=======
 ### 2-1. 채용 적극성 예측 모델
 
 **📂 폴더**: `02-urgency-score-analysis/2-1-urgency-prediction-model`
@@ -210,7 +162,6 @@ Streamlit 앱입니다.
 
 > 사이트별 수집 경로, 스크래핑이 조용히 깨지는 지점과 대응은
 > [2-2 README](02-urgency-score-analysis/2-2-urgency-app/README.md) 참조.
->>>>>>> project02
 
 ---
 
@@ -240,11 +191,7 @@ LLM을 활용하여 이력서 내용을 분석하고, 지원하고자 하는 직
 
 ---
 
-<<<<<<< HEAD
-## 🛠 기술 스택
-=======
 ## 기술 스택
->>>>>>> project02
 
 | 구분 | 사용 기술 |
 |---|---|
@@ -270,20 +217,6 @@ LLM을 활용하여 이력서 내용을 분석하고, 지원하고자 하는 직
 
 ```
 it-job-analytics-hub/
-<<<<<<< HEAD
-├── data/                                       # 원본/전처리 데이터
-├── notebooks/                                  # 탐색적 분석(EDA)
-├── 01-tech-stack-wordcloud/
-├── 02-urgency-score-analysis/
-│   ├── 2-1-urgency-prediction-model/
-│   └── 2-2-urgency-dashboard/
-├── 03-resume-job-matching/
-├── 04-resume-ai-feedback/
-├── requirements.txt
-└── README.md
-```
-
-=======
 ├── data/                                # 원본/전처리 데이터 (용량이 커서 git 제외)
 ├── 01-tech-stack-wordcloud/
 │   ├── app.py
@@ -315,7 +248,6 @@ it-job-analytics-hub/
 > 돌리기 위한 합집합이고, 앱 폴더 것은 그 앱에 필요한 것만 담고 있습니다
 > (Streamlit Community Cloud가 앱 파일과 같은 디렉터리의 파일을 먼저 찾기 때문입니다).
 
->>>>>>> project02
 ---
 
 ## 실행 방법
@@ -326,9 +258,6 @@ cd it-job-analytics-hub
 pip install -r requirements.txt
 ```
 
-<<<<<<< HEAD
-각 하위 프로젝트 폴더 내 README를 참고하여 개별 실행하세요.
-=======
 Python 3.10 에서 개발·검증했습니다. 루트 `requirements.txt`는 저장소 전체의
 합집합이라 한 번 설치하면 아래 앱을 모두 실행할 수 있습니다.
 
@@ -365,7 +294,6 @@ cd 02-urgency-score-analysis/2-1-urgency-prediction-model && python train_urgenc
 
 절차와 근거는
 [2-1 README](02-urgency-score-analysis/2-1-urgency-prediction-model/README.md)를 참고하세요.
->>>>>>> project02
 
 ---
 
