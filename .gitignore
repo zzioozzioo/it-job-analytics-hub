@@ -1,14 +1,3 @@
-<<<<<<< HEAD
-.env
-data/
-__pycache__
-build_master_dataset.py
-kakao_coords_cache.json
-rescore_urgency.py
-임시/
-02-urgency-score-analysis/
-config.toml
-=======
 # =====================================================================
 # 커밋 원칙
 #   포함: 소스 · 문서 · 실행 로그(README가 인용하는 근거) · 앱 구동에 필요한 모델
@@ -60,11 +49,7 @@ data/
 
 # unmeasurable 공고에 대한 모델 예측 덤프 (955KB, 파생물)
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_transfer/unmeasurable_predictions.json
-<<<<<<< HEAD
->>>>>>> project02
-=======
 
 # --- 로컬 전용 ---
 # Claude Code 세션 지침. 팀원과 공유하려면 이 줄을 지울 것.
 CLAUDE.md
->>>>>>> dbbe3221c72ccd1d6a345def31818eb8c10a2963
