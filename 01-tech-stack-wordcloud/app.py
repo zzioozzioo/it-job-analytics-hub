@@ -22,7 +22,7 @@ from pathlib import Path
 current_dir = Path(__file__).resolve().parent
 ROOT = current_dir.parent
 sys.path.insert(0, str(ROOT))
-from common.hf_data import fetch as hf_fetch  # noqa: E402
+from common.hf_data import MASTER_V2, fetch as hf_fetch  # noqa: E402
 
 # =========================================================
 # 0. 페이지 설정
@@ -318,11 +318,12 @@ NANUM_FONT_PATH = _nanum_font_path()
 # =========================================================
 # 1. 허깅페이스 데이터셋 로딩 (data/master_merged.json 대체)
 # =========================================================
-HF_FILENAME_V2 = "master_merged_v2.json"
 
-@st.cache_data(show_spinner="허깅페이스에서 master_merged.json 다운로드 중...")
+@st.cache_data(show_spinner="데이터셋 로딩 중... (없으면 허깅페이스에서 받습니다)")
 def load_master_df():
-    local_path = hf_fetch(HF_FILENAME_V2) 
+    # data/ 에 있으면 그것을 쓰고, 없으면 data/ 안으로 받아온다.
+    # 규칙은 common/hf_data.fetch() 한 곳에만 있다.
+    local_path = hf_fetch(MASTER_V2)
     with open(local_path, 'r', encoding='utf-8') as f:
         records = json.load(f)
     df = pd.DataFrame(records)

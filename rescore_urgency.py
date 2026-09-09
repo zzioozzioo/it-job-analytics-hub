@@ -36,17 +36,19 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding='utf-8')
 
 DATA_DIR = Path(__file__).parent / "data"
-SRC_PATH = DATA_DIR / "master_merged.json"      # 있으면 우선 사용
-OUT_PATH = DATA_DIR / "master_merged_v2.json"
+# 파일명 규약은 common/hf_data 가 정한다. 여기서 문자열을 다시 쓰지 않는다.
+from common.hf_data import MASTER, MASTER_V2, local_path   # noqa: E402
+
+SRC_PATH = local_path(MASTER)
+OUT_PATH = local_path(MASTER_V2)
 
 
 def src_path():
-    """원본 경로. 로컬에 없으면 허깅페이스에서 받아온다(`common/hf_data.py`).
+    """원본 경로. `data/`에 없으면 거기로 받아온다(`common/hf_data.py`).
 
     이 파일은 v2 규칙의 보존본이라 로직은 건드리지 않지만, 데이터 경로만은
-    저장소 공통 경로를 따른다 — `data/`가 없는 새 클론에서도 돌아야 한다."""
-    if SRC_PATH.exists():
-        return SRC_PATH
+    저장소 공통 경로를 따른다 — `data/`가 없는 새 클론에서도 돌아야 한다.
+    로컬 우선 판정은 fetch() 안에 있으므로 여기서 다시 하지 않는다."""
     sys.path.insert(0, str(Path(__file__).parent))
     from common.hf_data import fetch
     return Path(fetch(SRC_PATH.name))

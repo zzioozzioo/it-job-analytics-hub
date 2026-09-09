@@ -75,7 +75,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
 
 from rescore_urgency import is_measurable, score_by_vocabulary  # noqa: E402
-from train_urgency_baseline import (LOCAL_DATA, N_CLASSES,  # noqa: E402
+from train_urgency_baseline import (data_path, N_CLASSES,  # noqa: E402
                                     RANDOM_STATE, Timer, build_tfidf,
                                     dedup_and_group, evaluate, make_transform,
                                     rule)
@@ -90,7 +90,7 @@ TEST_FOLDS = 5
 # ---------------------------------------------------------------------------
 def load_split():
     rule("STEP 1. 데이터 로드 & measurable 분할  [개선 6]")
-    with open(LOCAL_DATA, encoding='utf-8') as f:
+    with open(data_path(), encoding='utf-8') as f:   # LOCAL_DATA 직접 참조 -> 공통 진입점
         df = pd.DataFrame(json.load(f))
     df['raw_text'] = df['raw_text'].fillna('').astype(str)
     df['source'] = df['source'].fillna('unknown').astype(str)
