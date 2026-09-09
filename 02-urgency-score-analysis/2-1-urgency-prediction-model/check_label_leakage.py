@@ -26,6 +26,7 @@ import json
 import re
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -38,8 +39,6 @@ from xgboost import XGBClassifier
 sys.stdout.reconfigure(encoding='utf-8')
 
 RANDOM_STATE = 42
-HF_REPO_ID = "data-craftee/korean-it-recruit-dataset"
-HF_FILENAME = "master_merged_v2.json"
 
 # rescore_urgency.py가 라벨을 만들 때 실제로 읽은 패턴들
 LABEL_SOURCE_PATTERNS = [
@@ -95,12 +94,12 @@ def main():
     args = ap.parse_args()
 
     # 지연 임포트. 이 모듈의 mask_text 는 2-2 앱의 추론 경로에도 들어가는데,
-    # huggingface_hub 를 최상단에서 import 하면 앱 requirements 에 없는 무거운
-    # 의존성이 딸려온다(없으면 모델 로딩이 조용히 실패한다).
-    # train_urgency_baseline.load_data() 도 같은 이유로 이 방식을 쓴다.
-    from huggingface_hub import hf_hub_download
-    path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_FILENAME, repo_type="dataset")
-    df = pd.DataFrame(json.load(open(path, encoding='utf-8')))
+    # 데이터 로딩 경로를 최상단에서 import 하면 앱 requirements 에 없는 무거운
+    # 의존성(huggingface_hub)이 딸려온다(없으면 모델 로딩이 조용히 실패한다).
+    # common/hf_data.py 도 같은 이유로 hf_hub_download 를 함수 안에서 import 한다.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # repo root
+    from train_urgency_baseline import data_path
+    df = pd.DataFrame(json.load(open(data_path(), encoding='utf-8')))
     df['raw_text'] = df['raw_text'].fillna('').astype(str)
     df = df[df['urgency_score'].notna()].copy()
     df['urgency_score'] = df['urgency_score'].astype(int)

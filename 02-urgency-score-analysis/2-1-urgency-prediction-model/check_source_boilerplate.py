@@ -45,8 +45,8 @@ sys.path.insert(0, str(HERE))
 from boilerplate import (fit_source_stopwords, overlap_report,  # noqa: E402
                          strip_series)
 from check_label_leakage import mask_text  # noqa: E402
+from train_urgency_baseline import data_path  # noqa: E402  데이터 경로 단일 출처
 
-LOCAL_DATA = HERE.parents[1] / "data" / "master_merged_v2.json"
 RANDOM_STATE = 42
 N_CLASSES = 5
 
@@ -59,7 +59,7 @@ def rule(t):
 
 
 def load():
-    with open(LOCAL_DATA, encoding='utf-8') as f:
+    with open(data_path(), encoding='utf-8') as f:
         df = pd.DataFrame(json.load(f))
     df['raw_text'] = df['raw_text'].fillna('').astype(str)
     df['source'] = df['source'].fillna('unknown').astype(str)

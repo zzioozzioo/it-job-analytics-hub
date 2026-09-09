@@ -90,13 +90,13 @@ def _self_check():
     """저장된 test 성능이 이 인터페이스로 재현되는지 확인한다."""
     import json
     from sklearn.model_selection import StratifiedGroupKFold
-    from train_urgency_baseline import (LOCAL_DATA, RANDOM_STATE,
+    from train_urgency_baseline import (RANDOM_STATE, data_path,
                                         dedup_and_group, evaluate, rule)
 
     sys.stdout.reconfigure(encoding='utf-8')
     rule("자기검증: 저장된 최종 성능이 재현되는가")
 
-    with open(LOCAL_DATA, encoding='utf-8') as f:
+    with open(data_path(), encoding='utf-8') as f:
         df = pd.DataFrame(json.load(f))
     df['raw_text'] = df['raw_text'].fillna('').astype(str)
     df['source'] = df['source'].fillna('unknown').astype(str)

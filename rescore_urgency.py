@@ -35,9 +35,22 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-DATA_DIR = Path(__file__).parent / "data"
-SRC_PATH = DATA_DIR / "master_merged.json"
-OUT_PATH = DATA_DIR / "master_merged_v2.json"
+# 파일명 규약은 common/hf_data 가 정한다. 여기서 문자열을 다시 쓰지 않는다.
+from common.hf_data import MASTER, MASTER_V2, local_path   # noqa: E402
+
+SRC_PATH = local_path(MASTER)
+OUT_PATH = local_path(MASTER_V2)
+
+
+def src_path():
+    """원본 경로. `data/`에 없으면 거기로 받아온다(`common/hf_data.py`).
+
+    이 파일은 v2 규칙의 보존본이라 로직은 건드리지 않지만, 데이터 경로만은
+    저장소 공통 경로를 따른다 — `data/`가 없는 새 클론에서도 돌아야 한다.
+    로컬 우선 판정은 fetch() 안에 있으므로 여기서 다시 하지 않는다."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    from common.hf_data import fetch
+    return Path(fetch(SRC_PATH.name))
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +311,7 @@ def build_reason(level, reasons, measurable, source):
 # 5. 실행
 # ---------------------------------------------------------------------------
 def main(write: bool):
-    with open(SRC_PATH, encoding='utf-8') as f:
+    with open(src_path(), encoding='utf-8') as f:
         data = json.load(f)
 
     enriched = []
@@ -389,6 +402,7 @@ def main(write: bool):
             break
 
     if write:
+        OUT_PATH.parent.mkdir(parents=True, exist_ok=True)   # data/ 없으면 생성
         with open(OUT_PATH, 'w', encoding='utf-8') as f:
             json.dump(out, f, ensure_ascii=False, indent=2)
         print()

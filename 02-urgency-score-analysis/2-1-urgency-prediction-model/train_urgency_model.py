@@ -29,7 +29,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from huggingface_hub import hf_hub_download
 from scipy import sparse
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import (classification_report, confusion_matrix, f1_score)
@@ -41,11 +40,15 @@ from xgboost import XGBClassifier
 sys.stdout.reconfigure(encoding='utf-8')
 
 HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE.parents[1]))          # repo root
+from common.hf_data import (HF_REPO_ID as _HF_REPO_ID,  # noqa: E402
+                            MASTER_V2, fetch)
+
 MODEL_DIR = HERE / "models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-HF_REPO_ID = "data-craftee/korean-it-recruit-dataset"
-HF_FILENAME = "master_merged_v2.json"
+HF_REPO_ID = _HF_REPO_ID     # 표시용. 실제 접근은 fetch()가 한다
+HF_FILENAME = MASTER_V2
 
 RANDOM_STATE = 42
 LIST_COLS = ['hard_skills', 'soft_skills', 'preferences', 'culture_keywords', 'final_techs']
@@ -63,7 +66,9 @@ def rule(title):
 # ---------------------------------------------------------------------------
 def load_data(sample=None):
     rule("STEP 1. 데이터 로드 & 클래스 분포")
-    path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_FILENAME, repo_type="dataset")
+    # hf_hub_download 를 직접 부르지 않는다 — data/ 를 건너뛰어 같은 파일이
+    # 두 벌 쌓이던 원인이었다. 로컬 우선 판정은 common/hf_data.fetch() 한 곳에.
+    path = fetch(HF_FILENAME)
     print(f"  다운로드: {path}")
     with open(path, encoding='utf-8') as f:
         df = pd.DataFrame(json.load(f))
