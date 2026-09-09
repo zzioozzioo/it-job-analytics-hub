@@ -64,16 +64,27 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parents[1]))      # repo root — common/ 접근용
 from check_label_leakage import mask_text  # noqa: E402  라벨 마스킹 패턴 단일 출처
 from boilerplate import fit_source_stopwords, strip_series  # noqa: E402
+from common.hf_data import MASTER_V2, fetch as hf_fetch  # noqa: E402
 
 MODEL_DIR = HERE / "models_baseline"          # 전체 실행 결과 (정본)
 SMOKE_DIR = HERE / "models_baseline_smoke"    # 축소 실행 결과 (정본을 덮지 않는다)
 V1_META = HERE / "models" / "model_meta.json"
-LOCAL_DATA = HERE.parents[1] / "data" / "master_merged_v2.json"
 
-HF_REPO_ID = "data-craftee/korean-it-recruit-dataset"
-HF_FILENAME = "master_merged_v2.json"
+HF_FILENAME = MASTER_V2      # 이 스크립트들이 학습하는 라벨 (v2 통제 실험 계열)
+
+
+def data_path():
+    """v2 라벨 파일의 경로. `data/`에 있으면 그것을, 없으면 거기로 받아온다.
+
+    2-1의 스크립트가 전부 이 함수를 통해 데이터를 연다. 각자 경로를 들고
+    있으면 `data/`가 없는 새 클론에서 파일별로 다르게 깨진다.
+
+    로컬 우선 판정은 이제 `common/hf_data.fetch()` 안에 있다. 저장소에
+    같은 로직이 세 벌 있었고 그중 둘이 로컬을 안 보고 있었다."""
+    return Path(hf_fetch(HF_FILENAME))
 
 RANDOM_STATE = 42
 N_CLASSES = 5
@@ -140,14 +151,10 @@ def resolve_out_dir(args):
 # ---------------------------------------------------------------------------
 def load_data(sample=None):
     rule("STEP 1. 데이터 로드")
-    if LOCAL_DATA.exists():
-        path = LOCAL_DATA
-        print(f"  로컬 파일 사용: {path}")
-    else:
-        from huggingface_hub import hf_hub_download
-        path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_FILENAME,
-                               repo_type="dataset")
-        print(f"  HF 다운로드: {path}")
+    path = data_path()
+    # fetch()가 항상 data/ 경로를 돌려준다. 예전 문구('HF 캐시 사용')는
+    # 캐시로 우회하던 시절의 흔적이라 거짓이 됐다.
+    print(f"  데이터: {path}")
 
     with open(path, encoding='utf-8') as f:
         df = pd.DataFrame(json.load(f))
@@ -576,7 +583,7 @@ def main():
     joblib.dump(all_models[pick]['_vec'], out_dir / "baseline_tfidf.joblib")
     meta = {
         'script': 'train_urgency_baseline.py',
-        'data': {'source': str(LOCAL_DATA if LOCAL_DATA.exists() else HF_REPO_ID),
+        'data': {'source': str(data_path()),
                  'sample': args.sample, **dedup_stats},
         'split': {'strategy': f'StratifiedGroupKFold (group = 앞 {DEDUP_PREFIX}자 해시)',
                   'train': len(tr), 'val': len(va), 'test': len(te),

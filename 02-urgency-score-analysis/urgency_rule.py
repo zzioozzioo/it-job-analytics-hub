@@ -1,8 +1,10 @@
 """
-urgency_rule.py  —  채용 적극성 라벨 규칙 v3
+urgency_rule.py  —  채용 적극성 라벨 규칙 v4
 
 2-1(모델 학습)과 2-2(Streamlit 앱)가 함께 쓰는 단일 출처.
-v2(`rescore_urgency.py`)를 두 군데 고쳤다. 둘 다 v2 라벨의 실측된 결함이다.
+
+v3에서 v2(`rescore_urgency.py`)의 실측된 결함 두 개를 고쳤고([수정 1][수정 2]),
+v4에서 두 개를 더 고쳤다 — 이중 계상([수정 3])과 어휘 폴백 재보정([수정 4]).
 
 ---------------------------------------------------------------------------
 [수정 1] 지원자 수를 모집인원으로 오인하던 버그
@@ -55,25 +57,141 @@ v3은 `남은기간`을 라벨 산출에서 제외하고 창 길이만 쓴다.
    의존하면 어제 4점이던 공고가 오늘 5점이 된다.
 
 ---------------------------------------------------------------------------
+[수정 3] '채용 시 마감' 한 문구가 두 신호에 이중 계상되던 것  (v4)
+---------------------------------------------------------------------------
+`채용 시 마감`은 RX_ROLLING(+10)과 RX_EARLY_CLOSE(+12) 양쪽 정규식에 모두
+들어 있어서, 한 문구가 22점이 됐다.
+
+v3이 이걸 몰랐던 게 아니다. rolling 탐지 범위를 본문 전체에서 접수 조건
+블록으로 좁힌 이유가 바로 이 이중 계상이었다(parse_application_window 주석).
+다만 그건 **앵커 밖** 매치만 막았고, 앵커 **안**에 문구가 있는 공고에서는
+겹침이 그대로 남았다. 즉 v3의 조치는 절반이었다.
+
+실측(measurable 30,569행):
+    rolling과 early_close 동시 발동            2,838행 (9.3%)
+      그중 early_close 근거가 그 문구뿐        2,781행 (98.0%)
+      그중 '조기 마감' 등 다른 근거도 있음        57행
+
+v4는 **마감 압박을 한 번만 센다.** early_close가 발동하면 rolling은 점수를
+얹지 않는다(근거 문장은 rolling 쪽 표현을 쓴다 — 더 구체적이므로).
+남길 쪽으로 early_close(+12)를 고른 것은 v3 주석이 "같은 문구를
+RX_EARLY_CLOSE가 이미 세고 있다"고 그쪽을 담당으로 전제했기 때문이다.
+
+라벨 영향: measurable 30,569행 중 1,993행(6.5%)의 등급이 내려간다.
+    3점 -> 2점  1,551행    4점 -> 3점  280행    5점 -> 4점  162행
+
+⚠️ 이 수정은 소스 간 라벨 정합성 지표를 **악화시킨다.** 숨기지 않고 적는다.
+
+    상위 등급(4+5) 비율    jobkorea   saramin   격차
+    v3                        5.4%      2.0%    2.7배
+    v4                        4.8%      0.9%    5.2배
+
+v3 README가 "22.9배 -> 2.7배로 줄었다"를 성과로 적었는데, 그 2.7배의 일부는
+**양쪽 소스에 똑같이 걸려 있던 이 버그가 떠받치고 있었다.** 잘못된 +10점이
+saramin의 한계 공고들을 3점으로 밀어올리고 있었고, 그걸 걷어내니 saramin의
+상위 비율이 절반 이하로 내려갔다. 후보 3안(rolling 제거 / 문구 단독일 때만
+제거 / early_close에서 문구 제거)을 모두 재봤는데 셋 다 5.2~5.3배로 같으므로,
+이건 설계 선택의 부작용이 아니라 버그를 걷어낸 결과다.
+
+정합성 지표가 나빠진 것과 라벨이 나빠진 것은 다르다. 다만 v3 README·02
+README의 "2.7배" 서술은 v4 재학습 시점에 함께 고쳐야 한다.
+
+---------------------------------------------------------------------------
+[수정 4] 어휘 폴백 재보정 — 기준점과 보폭  (v4)
+---------------------------------------------------------------------------
+메타데이터가 없는 공고(24.2%)는 규칙이 계산할 수 없어 어휘만 보고 등급을
+붙인다. v3까지 그 식이 `min(3 + 가산, 5)`였고, 2-1 README '한계 1'이
+**"상수보다 MAE가 나쁘다"** 고 실측해 두었다. 남겨둔 이유는 "대체할 검증된
+방법이 없어서"였는데, 그 문장이 v4에서 유효기간이 끝났다.
+
+새 신호도 새 어휘도 추가하지 않는다. 숫자 두 개만 바꿨다.
+
+    v3   level = min(3 + 가산, 5)
+    v4   level = clip(2 + 가산 x 0.25, 1, 5)
+
+진단은 v3이 전이 모델을 두고 한 말과 같다 — **"순서는 배웠지만 점 예측
+(calibration)이 나쁘다."** QWK가 0이 아니니 순서 신호는 있고, MAE가 상수보다
+나쁘니 그 순서를 엉뚱한 눈금 위에 올려놓은 것이다. 기준점이 너무 높고
+보폭이 너무 컸다.
+
+**측정 (measurable hold-out 6,056행, `2-1-.../calibrate_fallback.py`)**
+
+    방법                        MAE       QWK
+    상수 (2점)                 0.4747    0.0000
+    v3 폴백 (3 + 가산)          2.0591    0.0874
+    v4 폴백 (2 + 가산 x 0.25)   0.6932    0.2674
+
+v3 폴백을 **두 지표 모두에서** 이긴다(MAE -66%, QWK +0.18). 상수를 MAE로
+이기지는 못하지만, '완전히 지배당하는' 위치에서 'MAE를 조금 내주고 순서
+정보를 얻는' 위치로 옮겨간다. 남길 근거가 처음으로 생긴 셈이다.
+
+**BASE는 프록시로 고르지 않았다 — 이게 이 수정의 핵심 판단이다**
+
+SCALE(0.25)은 validation이 골랐다. 그런데 같은 규칙을 그대로 적용하면
+BASE=1이 뽑히는데, 그건 쓰면 안 된다.
+
+    폴백이 실제로 적용되는 unmeasurable 9,779행 중
+    8,144행(83.3%)은 어휘 가산점이 **0**이다.
+
+즉 폴백은 재보정 전에도 후에도 사실상 상수이고, 파라미터는 "그 더미를 몇
+점에 쌓을 것인가"를 정할 뿐이다. BASE=1이면 91%가 1점(매우 낮음)에 쌓인다.
+그건 2-1 README '한계 2'가 *"1점에 79.8% 쏠리는데, 이는 label shift이지 그
+공고들이 덜 급하다는 증거가 아니다"* 라며 이미 기각한 모양이다. 모델로 하면
+안 된다고 적어놓고 폴백으로 같은 일을 할 수는 없다.
+
+**BASE는 "관측할 수 없는 공고의 사전 확률"이고, 프록시(measurable)는 정의상
+그 질문에 답할 수 없다.** 두 모집단을 가르는 기준이 바로 "메타데이터가
+있느냐"이기 때문이다. 그래서 BASE는 measurable train 라벨의 **중앙값(2)**을
+쓴다 — v3이 상수 베이스라인을 "항상 3점"에서 "train 중앙값"으로 바꾼 것과
+같은 규약이다.
+
+**이 수정이 실제로 고치는 것**
+
+v3 폴백은 `급성장`·`애자일` 같은 단어 몇 개만으로 unmeasurable 877행에
+5점(매우 높음), 758행에 4점(높음)을 붙이고 있었다. v4에서는 상위 등급이
+사라진다.
+
+    unmeasurable 9,779행     1점     2점     3점    4점   5점
+    v3 (3 + 가산)              0      0   8,144   758  877
+    v4 (2 + 가산 x 0.25)       0  8,902     874     3    0
+
+⚠️ 그래도 이건 **검증된 라벨이 아니다.** "이 어휘가 있으면 실제로 더 적극적인
+   채용인가"는 여전히 확인된 적이 없다. 덜 틀리게 만든 것이지 맞게 만든 것이
+   아니다.
+
+---------------------------------------------------------------------------
 바뀌지 않은 것
 ---------------------------------------------------------------------------
 - 신호 가중치, 등급 경계(to_level), measurable 판정 기준
-- 어휘 폴백(score_by_vocabulary) — 2-1에서 "상수보다 MAE가 나쁘다"고
-  측정된 그대로다. 고치지 않고 남겨둔 이유는 한계 문서에 적었다.
-- '채용 시 마감'(rolling)의 탐지 범위 — 형태 B(saramin)는 v2와 동일한
-  `접수기간` 뒤 90자. 형태 A(jobkorea)는 그보다 좁게 잡는다.
-  (`parse_application_window` 주석 참조. 처음엔 본문 전체를 뒤졌는데, 같은
-   문구를 RX_EARLY_CLOSE가 이미 세고 있어 한 문구로 22점이 되는 이중 계상이었다.)
-비교 가능성을 위해 이것들은 v2와 동일하게 유지했다. v2 대비 성능 차이가
-위 두 수정에서만 오도록 하기 위해서다.
+- 어휘 사전 자체(TIER_A/B/C)와 가산점 계산 — [수정 4]는 가산점을 등급으로
+  옮기는 두 숫자만 건드렸다.
+- rolling 탐지 범위 — 형태 B(saramin)는 v2와 동일한 `접수기간` 뒤 90자,
+  형태 A(jobkorea)는 그보다 좁게. [수정 3]은 범위가 아니라 **계상 횟수**만
+  건드렸다(`parse_application_window` 주석 참조).
 
-v2 대비 최종 라벨 변경: 40,348행 중 5,694행(14.1%).
+라벨 변경 (40,348행 기준, 위치 기준 대조)
+    v2 -> v3   5,683행 (14.1%)
+    v3 -> v4  11,772행 (29.2%)
+                 [수정 3]  1,993행  measurable에서만. 전부 하락
+                           3->2 1,551 / 4->3 280 / 5->4 162
+                 [수정 4]  9,779행  unmeasurable 전체(기준점이 3->2로 바뀌므로)
+                           3->2 8,144 / 5->3 874 / 4->2 758 / 5->4 3
+    v2 -> v4  16,906행 (41.9%)
+
+두 수정은 서로 겹치지 않는다 — [수정 3]은 measurable, [수정 4]는 unmeasurable
+경로만 건드린다. 그래서 1,993 + 9,779 = 11,772로 정확히 맞는다.
+
+⚠️ v3 README·02 README에 적힌 "v2 대비 5,694행"은 11행 과다 계산이다.
+   비교를 (source, job_id) dict로 했는데 이 데이터셋에는 같은 키가
+   777종(1,554행) 중복돼 있어 서로 다른 공고가 짝지어졌다. main()의
+   load_labels() 주석 참조. 비율(14.1%)은 바뀌지 않는다.
 
 실행: python urgency_rule.py            분포 리포트만
-      python urgency_rule.py --write    data/master_merged_v3.json 생성
+      python urgency_rule.py --write    data/master_merged_v4.json 생성
 """
 
 import datetime
+import math
 import re
 import sys
 from pathlib import Path
@@ -81,12 +199,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent                            # it-job-analytics-hub/
 sys.path.insert(0, str(ROOT))
-from common.hf_data import fetch as hf_fetch  # noqa: E402
+from common.hf_data import (MASTER, MASTER_V2, MASTER_V3,  # noqa: E402
+                            MASTER_V4, fetch as hf_fetch, local_path)
 
-DATA_DIR = HERE.parent / "data"
-OUT_PATH = DATA_DIR / "master_merged_v3.json"
+OUT_PATH = local_path(MASTER_V4)      # 경로 규약은 common/hf_data 가 정한다
 
-RULE_VERSION = "v3"
+RULE_VERSION = "v4"
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +341,11 @@ def extract_signals(body: str):
     score = 0
     reasons = []
 
+    # [수정 3] 마감 압박은 한 번만 센다. E가 이 문구를 이미 세는지 먼저 확정하고
+    # 들어간다 — A의 rolling과 E의 early_close가 같은 `채용 시 마감`에 둘 다
+    # 걸려 한 문구로 22점이 되던 것을 막는다. 상세는 모듈 상단 [수정 3].
+    early_close = bool(RX_EARLY_CLOSE.search(body))
+
     # --- A. 접수 창 길이 (소스 통합) ---
     win, rolling = parse_application_window(body)
     if win is not None:
@@ -232,8 +355,11 @@ def extract_signals(body: str):
                 reasons.append(f"접수 {win}일" + (f"({note})" if note else ""))
                 break
     if rolling:
-        score += 10
-        reasons.append("채용 시 마감(충원되면 조기 종료)")
+        # E가 같은 신호를 세지 않을 때만 여기서 센다.
+        # (`채용시까지`처럼 RX_EARLY_CLOSE에 없는 표현으로 rolling이 켜진 경우)
+        if not early_close:
+            score += 10
+            reasons.append("채용 시 마감(충원되면 조기 종료)")
     elif win is None and RX_ALWAYS_OPEN.search(body):
         score += 10
         reasons.append("상시·수시 채용(지속 수요)")
@@ -273,10 +399,13 @@ def extract_signals(body: str):
         score += 16
         reasons.append("결원·충원 목적")
 
-    # --- E. 마감 압박 문구 ---
-    if RX_EARLY_CLOSE.search(body):
+    # --- E. 마감 압박 문구 ---  ([수정 3] rolling과 합쳐 한 번만 계상)
+    if early_close:
         score += 12
-        reasons.append("조기 마감 가능성 언급")
+        # 근거 문장은 rolling 쪽 표현을 우선한다. 접수 조건 필드에서 읽은
+        # 것이므로 "조기 마감 가능성"보다 무엇을 봤는지가 분명하다.
+        reasons.append("채용 시 마감(충원되면 조기 종료)" if rolling
+                       else "조기 마감 가능성 언급")
 
     # --- F. 보상 유인 ---
     if RX_BONUS.search(body):
@@ -323,13 +452,30 @@ TIER_C = {
 _FALLBACK_TIERS = [(TIER_A, 2), (TIER_B, 1), (TIER_C, 1)]
 
 
-def score_by_vocabulary(raw_text: str):
-    """(1~5 점수, 근거 라벨) — 어휘가 하나도 없으면 중립 3점.
+# [수정 4] 폴백 재보정 파라미터.  level = clip(BASE + 가산 x SCALE, 1, 5)
+#
+# v3까지는 BASE=3, SCALE=1.0 이었고 그 조합이 상수보다 MAE가 나빴다.
+# 새 신호도 새 어휘도 추가하지 않고 이 두 숫자만 바꿨다.
+#
+#   SCALE  validation이 골랐다 (`2-1-.../calibrate_fallback.py`).
+#          "어휘 하나가 등급을 얼마나 움직여야 하는가"는 보폭 문제라
+#          프록시가 답할 수 있다.
+#   BASE   프록시로 고르지 **않았다.** measurable train 라벨의 중앙값을 쓴다.
+#          프록시를 그대로 따르면 BASE=1이 뽑히는데, unmeasurable 9,779행 중
+#          83.3%가 어휘 가산 0점이라 그 더미가 통째로 1점(매우 낮음)에 쌓인다.
+#          그건 2-1 README '한계 2'가 "label shift이지 그 공고들이 덜 급하다는
+#          증거가 아니다"라며 이미 기각한 모양이다. BASE는 '관측할 수 없는
+#          공고의 사전 확률'이고 프록시(measurable)는 정의상 그 질문에 답할 수
+#          없다. 상세는 calibrate_fallback.py 상단.
+FALLBACK_BASE = 2
+FALLBACK_SCALE = 0.25
 
-    ⚠️ 2-1에서 측정된 결과: 이 폴백은 상수(항상 3점)보다 MAE가 나쁘다
-       (1.6610 vs 1.2199). 즉 실질적으로 아무 일도 하지 않는다.
-       그럼에도 남겨둔 이유는 대체할 검증된 방법이 없기 때문이다.
-       (모델로 대체하는 것도 근거가 없다 — 2-1 README '한계 2' 참조)"""
+
+def vocabulary_evidence(raw_text: str):
+    """(가산점, 근거 라벨) — 어휘 신호만 뽑는다. 등급 변환은 하지 않는다.
+
+    등급 변환과 분리해 둔 이유: 재보정(BASE·SCALE)을 밖에서 실험하려면
+    가산점 자체는 건드리지 않은 채로 꺼내 쓸 수 있어야 한다."""
     text = raw_text or ''
     add, hits = 0, []
     for group, weight in _FALLBACK_TIERS:
@@ -337,7 +483,29 @@ def score_by_vocabulary(raw_text: str):
             if re.search(pat, text):
                 add += weight
                 hits.append(name)
-    return min(3 + add, 5), hits
+    return add, hits
+
+
+def apply_fallback_scale(add, base=None, scale=None) -> int:
+    """가산점 -> 1~5 등급. 반올림은 0.5를 항상 위로 올린다.
+
+    파이썬 내장 round()는 은행가 반올림이라 round(2.5)=2, round(1.5)=2로
+    경계에서 방향이 갈린다. 등급 경계가 걸린 값이 실제로 나오므로 고정한다."""
+    b = FALLBACK_BASE if base is None else base
+    s = FALLBACK_SCALE if scale is None else scale
+    return max(1, min(int(math.floor(b + add * s + 0.5)), 5))
+
+
+def score_by_vocabulary(raw_text: str):
+    """(1~5 점수, 근거 라벨) — 메타데이터가 없는 공고(24.2%)의 미검증 폴백.
+
+    ⚠️ 이것은 여전히 **검증된 라벨이 아니다.** 규칙이 계산할 수 없는 공고에
+       숫자를 붙이는 임시방편이고, "이 어휘가 있으면 실제로 더 적극적인
+       채용인가"는 확인된 적이 없다. v4의 재보정은 그 타당성 문제를 푼 것이
+       아니라, 같은 신호를 **덜 틀리게 등급으로 옮기는** 것만 고쳤다.
+       (근거: 2-1의 `calibrate_fallback.py`, 02 README '어휘 폴백 재보정')"""
+    add, hits = vocabulary_evidence(raw_text)
+    return apply_fallback_scale(add), hits
 
 
 # ---------------------------------------------------------------------------
@@ -360,11 +528,16 @@ LEVEL_LABEL = {1: "매우 낮음", 2: "낮음", 3: "보통", 4: "높음", 5: "�
 
 def build_reason(level, reasons, measurable):
     if not measurable:
+        # [수정 4] "(중립)"이라고 쓰지 않는다. 기준점이 3점이던 v3에서는 그 말이
+        # 맞았지만 지금은 2점이라 '중립'이 아니다. 그리고 이 경로의 점수는
+        # 관측이 아니라 기준점이므로, 그 사실 자체를 문장에 남긴다.
         if not reasons:
-            return (f"적극성 {LEVEL_LABEL[level]}(중립) — 마감·모집 규모 정보가 없고 "
-                    f"본문에 긴급 관련 어휘도 없어 기준점 부여")
-        return (f"적극성 {LEVEL_LABEL[level]} — 마감 정보는 없으나 본문 어휘에서 "
-                f"긴급 정황 감지: " + " · ".join(reasons))
+            return (f"적극성 {LEVEL_LABEL[level]} — 마감·모집 규모 정보가 없어 "
+                    f"측정할 수 없고 본문에 긴급 어휘도 없다. "
+                    f"관측이 아니라 기준점({level}점)을 부여한 값이다")
+        return (f"적극성 {LEVEL_LABEL[level]} — 마감 정보가 없어 측정 불가. "
+                f"본문 어휘로만 추정: " + " · ".join(reasons) +
+                " (검증되지 않은 폴백)")
     if not reasons:
         return (f"적극성 {LEVEL_LABEL[level]} — 채용 메타데이터는 있으나 접수 기간·모집 규모·"
                 f"즉시 입사·결원 충원 등 적극성 신호가 확인되지 않음")
@@ -404,15 +577,12 @@ def score_posting(raw_text: str, source: str = 'unknown') -> dict:
 # ---------------------------------------------------------------------------
 # 8. 라벨 재생성
 # ---------------------------------------------------------------------------
-HF_FILENAME = "master_merged.json"
-HF_FILENAME_V2 = "master_merged_v2.json"
-HF_FILENAME_V3 = "master_merged_v3.json"
 def main(write: bool):
     import json
     from collections import Counter
 
     sys.stdout.reconfigure(encoding='utf-8')
-    src_path = hf_fetch(HF_FILENAME)
+    src_path = hf_fetch(MASTER)
     with open(src_path, encoding='utf-8') as f:
         data = json.load(f)
 
@@ -424,9 +594,39 @@ def main(write: bool):
         rec['urgency_reason'] = r['urgency_reason']
         out.append(rec)
 
-    v2_path = hf_fetch(HF_FILENAME_V2)
-    with open(v2_path, encoding='utf-8') as f:
-        v2 = {(r['source'], r['job_id']): r['urgency_score'] for r in json.load(f)}
+    def load_labels(path):
+        """이전 버전 라벨을 원본과 같은 순서의 리스트로 읽는다.
+
+        ⚠️ (source, job_id)를 키로 dict를 만들면 안 된다. 이 데이터셋에는
+        같은 키가 777종(1,554행) 중복돼 있어서 dict가 뒤엣것만 남기고,
+        서로 다른 공고끼리 짝지어져 비교 결과가 틀린다. 실제로 v3->v4
+        비교에서 `1점->5점`처럼 규칙상 불가능한 전이가 나와 발견했다
+        (한 문구의 이중 계상을 없앤 수정이라 점수는 내려가기만 한다).
+
+        모든 버전이 master_merged.json을 같은 순서로 훑어 만들어지므로
+        위치로 맞추는 것이 정확하다. 정렬이 어긋나면 비교하지 않는다."""
+        try:
+            with open(path, encoding='utf-8') as f:
+                prev = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if len(prev) != len(data):
+            return None
+        for a, b in zip(prev, data):
+            if (a.get('source'), a.get('job_id')) != (b.get('source'), b.get('job_id')):
+                return None
+        return [r['urgency_score'] for r in prev]
+
+    def baseline(filename):
+        """직전 버전 라벨. 로컬에 없으면 hf_data가 data/로 받아온다.
+        받을 수도 만들 수도 없으면 그 비교만 건너뛴다(멈추지 않는다)."""
+        try:
+            return load_labels(hf_fetch(filename))
+        except OSError:
+            return None
+
+    baselines = [("v3", baseline(MASTER_V3)),
+                 ("v2", baseline(MASTER_V2))]
 
     print("=" * 74)
     print(f"라벨 규칙 {RULE_VERSION} 재산출  (n={len(out):,})")
@@ -437,15 +637,17 @@ def main(write: bool):
         line = '  '.join(f"{lv}:{c.get(lv, 0):>6,}" for lv in range(1, 6))
         print(f"  {src or '전체':<9} n={len(sub):>6,}  {line}")
 
-    if v2:
+    for name, prev in baselines:
+        if prev is None:
+            print(f"\n  ({name} 라벨을 읽을 수 없거나 원본과 정렬이 달라 비교를 건너뜁니다)")
+            continue
         chg = Counter()
-        for r in out:
-            old = v2.get((r['source'], r['job_id']))
-            if old is not None and old != r['urgency_score']:
+        for old, r in zip(prev, out):
+            if old != r['urgency_score']:
                 chg[(old, r['urgency_score'])] += 1
         tot = sum(chg.values())
         print()
-        print(f"  v2 대비 등급 변경: {tot:,}행 ({tot / len(out) * 100:.1f}%)")
+        print(f"  {name} 대비 등급 변경: {tot:,}행 ({tot / len(out) * 100:.1f}%)")
         for k, v in sorted(chg.items(), key=lambda kv: -kv[1])[:8]:
             print(f"    {k[0]}점 -> {k[1]}점 : {v:>6,}")
 
@@ -455,7 +657,7 @@ def main(write: bool):
             json.dump(out, f, ensure_ascii=False, indent=2)
         print(f"\n저장: {OUT_PATH}  ({len(out):,} rows)")
     else:
-        print("\n(--write 를 붙이면 master_merged_v3.json 으로 저장됩니다)")
+        print("\n(--write 를 붙이면 master_merged_v4.json 으로 저장됩니다)")
     return out
 
 # ---------------------------------------------------------------------------

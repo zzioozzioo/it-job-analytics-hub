@@ -1,12 +1,12 @@
 """
-compare_v2_v3.py
+compare_labels.py
 
-"v3 라벨이 v2보다 낫다"를 **지표 비교의 함정을 피해서** 확인한다.
+"새 라벨이 옛 라벨보다 낫다"를 **지표 비교의 함정을 피해서** 확인한다.
 
 ---------------------------------------------------------------------------
 왜 별도 스크립트가 필요한가
 ---------------------------------------------------------------------------
-train_urgency_v3.py의 EXP-B는 전이 QWK를 v2 라벨 0.0486 -> v3 라벨 0.1309로
+train_urgency.py의 EXP-B는 전이 QWK를 v2 라벨 0.0486 -> v3 라벨 0.1309로
 보고한다. 그런데 이 두 숫자를 그냥 나란히 놓으면 안 된다.
 
   QWK도 MAE도 **라벨 분포에 의존**한다.
@@ -23,7 +23,10 @@ raw 지표만 비교하면, 개선인지 그냥 문제가 쉬워진 것인지 �
 베이스라인은 train 라벨의 **중앙값**을 상수로 찍는다(MAE를 최소화하는 상수).
 train만 보고 정하므로 hold-out을 훔쳐보지 않는다.
 
-실행: python compare_v2_v3.py
+v4 라운드도 같은 방식으로 본다(`--v4`).
+
+실행: python compare_labels.py         # v2 라벨 vs v3 라벨
+      python compare_labels.py --v4    # v3 라벨 vs v4 라벨
 """
 
 import json
@@ -43,30 +46,45 @@ sys.path.insert(0, str(HERE.parent))
 from urgency_rule import is_measurable  # noqa: E402
 from train_urgency_baseline import (RANDOM_STATE, build_tfidf,  # noqa: E402
                                     evaluate, make_transform, rule)
+from common.hf_data import fetch  # noqa: E402
 
-DATA_V3 = HERE.parents[1] / "data" / "master_merged_v3.json"
-DATA_V2 = HERE.parents[1] / "data" / "master_merged_v2.json"
 VARIANT = 'masked+clean'
 MAX_FEATURES = 30000
 
+# (옛 라벨, 새 라벨) — 파일명만 들고 있다가 common.hf_data.fetch()로 연다.
+ROUNDS = {False: ('v2', 'v3'), True: ('v3', 'v4')}
 
-def load():
-    with open(DATA_V3, encoding='utf-8') as f:
-        df = pd.DataFrame(json.load(f))
+
+def load(old_tag, new_tag):
+    """두 라벨 세트를 같은 행에 나란히 붙인다.
+
+    ⚠️ (source, job_id) dict 조인을 쓰지 않는다. 같은 키가 777종(1,554행)
+       중복돼 있어 서로 다른 공고가 짝지어진다(`urgency_rule.load_labels()`
+       주석 참조). 모든 라벨 파일이 master_merged.json을 같은 순서로 훑어
+       만들어지므로 위치로 맞춘다."""
+    with open(fetch(f"master_merged_{new_tag}.json"), encoding='utf-8') as f:
+        rows_new = json.load(f)
+    with open(fetch(f"master_merged_{old_tag}.json"), encoding='utf-8') as f:
+        rows_old = json.load(f)
+    if len(rows_old) != len(rows_new) or any(
+            (a.get('source'), a.get('job_id')) != (b.get('source'), b.get('job_id'))
+            for a, b in zip(rows_old, rows_new)):
+        raise SystemExit(f"  [!] {old_tag}와 {new_tag}의 행 정렬이 다르다 — 비교 불가")
+
+    df = pd.DataFrame(rows_new)
     df['raw_text'] = df['raw_text'].fillna('').astype(str)
     df['source'] = df['source'].fillna('unknown').astype(str)
-    df = df.rename(columns={'urgency_score': 'y_v3'})
-    with open(DATA_V2, encoding='utf-8') as f:
-        v2 = {(r['source'], r['job_id']): r['urgency_score'] for r in json.load(f)}
-    df['y_v2'] = [v2.get((s, j)) for s, j in zip(df['source'], df['job_id'])]
-    df = df[df['y_v2'].notna()].copy()
-    df['y_v2'] = df['y_v2'].astype(int)
-    df['y_v3'] = df['y_v3'].astype(int)
+    df = df.rename(columns={'urgency_score': 'y_new'})
+    df['y_new'] = df['y_new'].astype(int)
+    df['y_old'] = [r['urgency_score'] for r in rows_old]
+    df['y_old'] = df['y_old'].astype(int)
     return df[df['raw_text'].map(is_measurable)].reset_index(drop=True)
 
 
-def main():
-    meas = load()
+def main(use_v4=False):
+    old_tag, new_tag = ROUNDS[use_v4]
+    tag_of = {'y_old': old_tag, 'y_new': new_tag}
+    meas = load(old_tag, new_tag)
     conv = make_transform(VARIANT)
     srcs = [s for s in meas['source'].unique() if (meas['source'] == s).sum() >= 500]
 
@@ -76,7 +94,7 @@ def main():
     print()
 
     rows = []
-    for label in ['y_v2', 'y_v3']:
+    for label in ['y_old', 'y_new']:
         for src in srcs:
             tr_m, te_m = meas['source'] != src, meas['source'] == src
             ytr = (meas.loc[tr_m, label] - 1).to_numpy()
@@ -102,7 +120,7 @@ def main():
                 fits[tag] = evaluate(yte, svc.predict(Xte))
 
             rows.append({
-                'label': label[-2:], 'target': src, 'n': int(te_m.sum()),
+                'label': tag_of[label], 'target': src, 'n': int(te_m.sum()),
                 'base_const': base + 1,
                 'base_mae': b['mae'], 'base_off_by_1': b['off_by_1'],
                 'bal_mae': fits['balanced']['mae'],
@@ -140,11 +158,11 @@ def main():
     print("    · MAE 개선은 각 라벨 세트의 자기 상수 대비 %이므로 분포 차이가 상쇄된다.")
     print("    · MAE 개선이 음수면 그 모델은 '항상 같은 값 찍기'보다 못하다는 뜻이다.")
 
-    out = HERE / "compare_v2_v3.json"
+    out = HERE / "compare_labels.json"
     out.write_text(json.dumps(df.to_dict('records'), ensure_ascii=False,
                               indent=2, default=float), encoding='utf-8')
     print(f"\n  저장: {out.name}")
 
 
 if __name__ == '__main__':
-    main()
+    main('--v4' in sys.argv)

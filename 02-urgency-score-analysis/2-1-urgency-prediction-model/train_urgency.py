@@ -1,8 +1,11 @@
 """
-train_urgency_v3.py
+train_urgency.py
 
-v3 라벨(`urgency_rule.py`)로 다시 학습하고, v2 대비 무엇이 나아졌는지를
-같은 파이프라인 위에서 측정한다.
+새 라벨(`urgency_rule.py`)로 학습하고, 직전 라벨 대비 무엇이 나아졌는지를
+같은 파이프라인 위에서 측정한다. 라운드는 `--v4` 로 고른다(기본값 v3).
+
+※ 파일명에 버전을 넣지 않는다. v3 전용이던 시절 이름이 `train_urgency_v3.py`
+   였는데 v4까지 이 스크립트가 학습하게 되면서 이름이 내용과 어긋났다.
 
 ---------------------------------------------------------------------------
 이 스크립트가 답하려는 질문
@@ -32,9 +35,45 @@ train_urgency_transfer.py는 EXP-A의 모델을 **test QWK로** 골랐다
 예측 방식(argmax vs 기댓값 반올림)도 validation에서 정한다.
 
 실행:
-  python train_urgency_v3.py                # 전체 (약 15분)
-  python train_urgency_v3.py --skip-xgb     # 선형만 (수십 초, 스모크)
-  python train_urgency_v3.py --sample 8000  # 축소
+  python train_urgency.py                # 전체 (약 15분) — 정본 models_v3/
+  python train_urgency.py --skip-xgb     # 선형만 (수십 초, 스모크)
+  python train_urgency.py --sample 8000  # 축소
+  python train_urgency.py --struct       # [실험] 구조화 피처 추가
+  python train_urgency.py --struct-only  # [실험] 전이를 구조화 피처만으로
+  python train_urgency.py --v4           # v4 라벨 학습 + v3 대비 비교 -> models_v4/
+
+---------------------------------------------------------------------------
+v4 라운드 (--v4)
+---------------------------------------------------------------------------
+스크립트를 복제하지 않고 라벨 버전만 파라미터로 뺐다(ROUNDS). 파이프라인이
+두 벌로 갈라지면 통제 조건이 조용히 어긋나기 때문이다. 기본값은 v3 라운드
+그대로라 기존 재현 절차는 바뀌지 않는다.
+
+v4가 고친 것(`urgency_rule.py` [수정 3][수정 4]):
+  [수정 3] '채용 시 마감'이 rolling(+10)과 조기마감(+12)에 이중 계상되던 것
+  [수정 4] 어휘 폴백 재보정 (3 + 가산 -> 2 + 가산 x 0.25)
+
+⚠️ [수정 4]는 unmeasurable 행에만 영향을 준다. 학습은 measurable만 쓰므로
+   EXP-A/B의 변화는 전부 [수정 3]에서 온다. EXP-C만 [수정 4]를 반영한다.
+
+⚠️ 라벨 파일은 얼려도 규칙 코드는 얼지 않는다. EXP-C는 `urgency_rule`에서
+   score_by_vocabulary를 **실행 시점에** 임포트하므로, 기본(v3) 라운드로
+   돌려도 폴백 수치는 v4 재보정이 적용된 값이 나온다. 2-1 README에 적힌
+   v3 당시의 폴백 수치(MAE 2.0093)를 재현하려면 FALLBACK_BASE=3,
+   FALLBACK_SCALE=1.0으로 되돌려야 한다. EXP-A/B는 라벨 파일만 쓰므로
+   영향받지 않는다.
+
+---------------------------------------------------------------------------
+--struct 를 기본값으로 켜지 않는 이유
+---------------------------------------------------------------------------
+구조화 피처 11개는 전부 mask_text()가 지우는 구간에서 나온다
+(`window_days` <- `접수기간…`, `is_urgent_word` <- `급구|긴급채용`, ...).
+붙이는 순간 masked+clean 통제가 무효가 되고, 전이 QWK가 0.1309 -> 0.6757로
+뛰지만 그건 통제가 걷어냈던 누출이 되돌아온 것이다. 규칙을 선형모델로
+재현한 것이지 일반화가 아니다(2-1/02 README의 ablation 참조).
+
+그래서 실험 플래그로만 두고, 켜면 결과를 models_v3_struct/ 에 저장한다.
+앱이 로드하는 정본 models_v3/ 는 통제가 걸린 모델로 유지된다.
 """
 
 import argparse
@@ -53,9 +92,6 @@ from xgboost import XGBClassifier
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-HF_FILENAME_V2 = "master_merged_v2.json"
-HF_FILENAME_V3 = "master_merged_v3.json"
-
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))          # 02-urgency-score-analysis/
@@ -68,40 +104,63 @@ from scipy.sparse import hstack, csr_matrix
 from train_urgency_baseline import (N_CLASSES, RANDOM_STATE,  # noqa: E402
                                     Timer, build_tfidf, dedup_and_group,
                                     evaluate, make_transform, rule)
-from common.hf_data import fetch as hf_fetch  # noqa: E402
+from common.hf_data import (MASTER_V2, MASTER_V3,  # noqa: E402
+                            MASTER_V4, fetch as hf_fetch)
 
-DATA_V3 = HERE.parents[1] / "data" / HF_FILENAME_V3   # urgency_rule.py --write 산출물, 로컬 유지
-OUT_DIR = HERE / "models_v3"
-SMOKE_DIR = HERE / "models_v3_smoke"
+# 어떤 라벨 버전을 학습하고 무엇과 비교할지. --v4 로 고른다.
+#   new = 학습·저장 대상,  old = EXP-B에서 나란히 놓을 직전 버전
+# 경로가 아니라 **파일명**을 들고 있다가 common.hf_data.fetch()로 연다.
+# fetch()가 "data/에 있으면 그것, 없으면 data/로 다운로드, 둘 다 안 되면
+# 만드는 명령 안내"를 한 곳에서 처리한다. v4는 허깅페이스에 없으므로
+# (--write 산출물) 라벨을 안 만들고 --v4 를 돌리면 그 안내가 나온다.
+ROUNDS = {
+    'v3': {'new': ('v3', MASTER_V3), 'old': ('v2', MASTER_V2), 'out': 'models_v3'},
+    'v4': {'new': ('v4', MASTER_V4), 'old': ('v3', MASTER_V3), 'out': 'models_v4'},
+}
 
 VARIANT = 'masked+clean'
 TEST_FOLDS = 5
 
 
 # ---------------------------------------------------------------------------
-def load_with_both_labels():
-    """v3 데이터를 읽고 같은 행에 v2 라벨을 붙인다.
+def load_with_both_labels(round_cfg):
+    """학습할 라벨(new)을 읽고 같은 행에 직전 버전 라벨(old)을 붙인다.
 
-    (source, job_id)로 조인한다. 두 파일 모두 master_merged.json에서
-    라벨만 갈아끼운 것이므로 행 집합이 같다."""
-    rule("STEP 1. 데이터 로드 (v3 라벨 + v2 라벨 나란히)")
-    with open(DATA_V3, encoding='utf-8') as f:
-        df = pd.DataFrame(json.load(f))
+    ⚠️ (source, job_id)로 조인하면 안 된다. 이 데이터셋에는 같은 키가
+       777종(1,554행) 중복돼 있어 dict가 뒤엣것만 남기고, 서로 다른 공고끼리
+       짝지어진다. v4 작업 중 규칙상 불가능한 등급 전이가 나와서 발견했다
+       (`urgency_rule.load_labels()` 주석 참조).
+
+       모든 라벨 파일이 master_merged.json을 같은 순서로 훑어 만들어지므로
+       위치로 맞추는 것이 정확하다. 정렬이 어긋나면 멈춘다 — 조용히 잘못된
+       비교를 내놓는 것보다 낫다."""
+    new_tag, new_file = round_cfg['new']
+    old_tag, old_file = round_cfg['old']
+    rule(f"STEP 1. 데이터 로드 ({new_tag} 라벨 + {old_tag} 라벨 나란히)")
+    new_path = hf_fetch(new_file)
+    print(f"  {new_tag}: {new_path}")
+    with open(new_path, encoding='utf-8') as f:
+        rows_new = json.load(f)
+    df = pd.DataFrame(rows_new)
     df['raw_text'] = df['raw_text'].fillna('').astype(str)
     df['source'] = df['source'].fillna('unknown').astype(str)
-    df = df.rename(columns={'urgency_score': 'y_v3'})
-    df['y_v3'] = df['y_v3'].astype(int)
+    df = df.rename(columns={'urgency_score': 'y_new'})
+    df['y_new'] = df['y_new'].astype(int)
 
-    v2_path = hf_fetch(HF_FILENAME_V2)
-    with open(v2_path, encoding='utf-8') as f:
-        v2 = {(r['source'], r['job_id']): r['urgency_score'] for r in json.load(f)}
+    op = hf_fetch(old_file)
+    print(f"  {old_tag}: {op}")
+    with open(op, encoding='utf-8') as f:
+        rows_old = json.load(f)
+    if len(rows_old) != len(rows_new):
+        raise SystemExit(f"  [!] {old_tag}({len(rows_old):,})와 "
+                         f"{new_tag}({len(rows_new):,})의 행 수가 다르다 — 비교 불가")
+    for a, b in zip(rows_old, rows_new):
+        if (a.get('source'), a.get('job_id')) != (b.get('source'), b.get('job_id')):
+            raise SystemExit(f"  [!] {old_tag}와 {new_tag}의 행 정렬이 다르다 — 비교 불가")
+    print(f"  {old_tag} 라벨 정렬 확인 (위치 기준 {len(rows_old):,}행 일치)")
 
-    df['y_v2'] = [v2.get((s, j)) for s, j in zip(df['source'], df['job_id'])]
-    missing = int(df['y_v2'].isna().sum())
-    if missing:
-        print(f"  [!] v2 라벨을 못 찾은 행 {missing:,}개 -> 비교에서 제외")
-        df = df[df['y_v2'].notna()].copy()
-    df['y_v2'] = df['y_v2'].astype(int)
+    df['y_old'] = [r['urgency_score'] for r in rows_old]
+    df['y_old'] = df['y_old'].astype(int)
     df = df.reset_index(drop=True)
 
     df['measurable'] = df['raw_text'].map(is_measurable)
@@ -113,19 +172,21 @@ def load_with_both_labels():
 
     print()
     print("  measurable 라벨 분포 (%) — 소스별로 같은 모양이어야 '같은 타깃'이다")
-    for tag in ['y_v2', 'y_v3']:
-        print(f"    [{tag[-2:]}]")
+    for col, tag in [('y_old', old_tag), ('y_new', new_tag)]:
+        print(f"    [{tag}]")
         for s in ['jobkorea', 'saramin']:
             sub = m[m['source'] == s]
             if not len(sub):
                 continue
-            vc = sub[tag].value_counts(normalize=True).mul(100)
+            vc = sub[col].value_counts(normalize=True).mul(100)
             line = '  '.join(f"{lv}:{vc.get(lv, 0.0):5.1f}%" for lv in range(1, 6))
             top2 = vc.get(4, 0.0) + vc.get(5, 0.0)
             print(f"      {s:<9} {line}   상위등급(4+5) {top2:5.1f}%")
     print()
     print("  -> v2는 jobkorea와 saramin의 상위등급 비율이 몇 배씩 차이 난다.")
     print("     같은 개념을 쟀다면 나올 수 없는 격차이고, 이것이 전이 실패의 원인이다.")
+    print("     (v4에서는 이 격차가 다시 벌어진다 — 이중 계상이 양쪽을 함께")
+    print("      부풀리고 있었기 때문이다. 02 README '정합성 지표는 나빠진다' 참조)")
     return m, u
 
 
@@ -136,7 +197,7 @@ def make_split(meas):
     잡는다(어차피 최종 모델은 v3)."""
     meas, groups, dedup_stats = dedup_and_group(meas)
     rule("STEP 2. Split (measurable 내부, group-aware)")
-    strat = meas['source'] + "__" + meas['y_v3'].astype(str)
+    strat = meas['source'] + "__" + meas['y_new'].astype(str)
     sgkf = StratifiedGroupKFold(n_splits=TEST_FOLDS, shuffle=True,
                                 random_state=RANDOM_STATE)
     rest_pos, te_pos = next(sgkf.split(meas, strat, groups))
@@ -154,10 +215,18 @@ def make_split(meas):
     return meas, tr, va, te, dedup_stats
 
 def build_struct_matrix(df):
-    """structured_features를 이용해 sparse matrix를 만든다."""
+    """structured_features를 이용해 sparse matrix를 만든다.
+
+    ⚠️ 기본 학습 경로에서는 쓰지 않는다. `--struct` / `--struct-only`를
+    줬을 때만 붙는다. 이유는 main()의 STEP 3 주석 참조."""
     feats = [structured_features(t, s) for t, s in zip(df['raw_text'], df['source'])]
     arr = np.array([[f[k] for k in STRUCT_FEATURE_NAMES] for f in feats], dtype=float)
     return csr_matrix(arr)
+
+
+def stack(X, struct):
+    """구조화 피처가 있으면 옆에 붙이고, 없으면 그대로 둔다."""
+    return X if struct is None else hstack([X, struct]).tocsr()
 
 def fit_models(txt_tr, ytr, txt_va, yva, args, tag, 
                 struct_tr=None, struct_va=None, skip_xgb=None, use_text=True):
@@ -169,9 +238,7 @@ def fit_models(txt_tr, ytr, txt_va, yva, args, tag,
 
     if use_text:
         vec, Xtr, (Xva,), vs = build_tfidf(txt_tr, [txt_va], args.max_features)
-        if struct_tr is not None:
-            Xtr = hstack([Xtr, struct_tr]).tocsr()
-            Xva = hstack([Xva, struct_va]).tocsr()
+        Xtr, Xva = stack(Xtr, struct_tr), stack(Xva, struct_va)
     else:
         vec = None
         Xtr, Xva = struct_tr, struct_va
@@ -187,7 +254,8 @@ def fit_models(txt_tr, ytr, txt_va, yva, args, tag,
                         random_state=RANDOM_STATE).fit(Xtr, ytr)
     out['linear_svc'] = svc
     
-    feat_label = "TF-IDF" if use_text else "구조화"
+    feat_label = ("TF-IDF+구조화" if struct_tr is not None else "TF-IDF") \
+        if use_text else "구조화"
     print(f"    [{tag}] {feat_label} {Xtr.shape[1]:,}f ({vs:.1f}s) · linear_svc {t.cpu:.1f}s")
 
     if not skip:
@@ -229,12 +297,22 @@ def main():
     ap.add_argument('--n-estimators', type=int, default=400)
     ap.add_argument('--early-stopping', type=int, default=30)
     ap.add_argument('--skip-xgb', action='store_true')
+    ap.add_argument('--struct', action='store_true',
+                    help='[실험] TF-IDF 옆에 구조화 피처 11개를 붙인다. '
+                         '기본값 꺼짐 — 켜면 models_v3_struct/ 에 저장된다')
     ap.add_argument('--struct-only', action='store_true',
-                help='TF-IDF 없이 구조화 피처 11개만으로 학습 (ablation)')
+                    help='[실험] EXP-B(전이)를 TF-IDF 없이 구조화 피처 11개만으로 '
+                         '돌리는 ablation. --struct 를 함께 켠 것으로 취급한다')
+    ap.add_argument('--v4', action='store_true',
+                    help='v4 라벨로 학습하고 v3와 비교한다 (기본값은 v3 vs v2). '
+                         '저장 위치는 models_v4/')
     args = ap.parse_args()
+    use_struct = args.struct or args.struct_only
+    cfg = ROUNDS['v4' if args.v4 else 'v3']
+    new_tag, old_tag = cfg['new'][0], cfg['old'][0]
     t_start = time.time()
 
-    meas, unmeas = load_with_both_labels()
+    meas, unmeas = load_with_both_labels(cfg)
     if args.sample:
         meas = meas.sample(n=min(args.sample, len(meas)),
                            random_state=RANDOM_STATE).reset_index(drop=True)
@@ -251,20 +329,30 @@ def main():
     results = {}
 
     # -----------------------------------------------------------------------
-    rule("STEP 3. EXP-A  in-domain (v3 라벨) — 모델 선택은 validation으로")
+    rule(f"STEP 3. EXP-A  in-domain ({new_tag} 라벨) — 모델 선택은 validation으로")
     print("  ⚠️ v2 스크립트는 여기서 test QWK로 모델을 골랐다(test contamination).")
     print("     v3은 validation으로 고르고, test는 마지막에 한 번만 본다.")
     print()
-    y = {k: (d['y_v3'] - 1).to_numpy() for k, d in [('tr', tr), ('va', va), ('te', te)]}
+    y = {k: (d['y_new'] - 1).to_numpy() for k, d in [('tr', tr), ('va', va), ('te', te)]}
 
-    struct_tr = build_struct_matrix(tr)
-    struct_va = build_struct_matrix(va)
-    struct_te = build_struct_matrix(te)
+    # 구조화 피처는 기본값에서 끈다(--struct 로만 켠다).
+    # 11개 전부가 mask_text()가 지우는 구간에서 나오는 값이라, 붙이는 순간
+    # masked+clean 통제(2-1 README: Macro F1 -0.1301을 치르고 세운 것)가
+    # 무효가 된다. 실험은 아래 EXP-B에서만 의미가 있고, 여기서 켜면 앱이
+    # 쓰는 정본 모델이 통제 없는 모델로 바뀐다.
+    if use_struct:
+        struct_tr = build_struct_matrix(tr)
+        struct_va = build_struct_matrix(va)
+        struct_te = build_struct_matrix(te)
+        print(f"  [!] --struct: 구조화 피처 {len(STRUCT_FEATURE_NAMES)}개 사용 "
+              f"(라벨 누출 있음 · 저장 위치 {cfg['out']}_struct/)")
+    else:
+        struct_tr = struct_va = struct_te = None
 
-    models, vec = fit_models(txt['tr'], y['tr'], txt['va'], y['va'], args, 'A', 
-                                struct_tr=struct_tr, struct_va=struct_va)
-    Xva = hstack([vec.transform(txt['va']), struct_va]).tocsr()
-    Xte = hstack([vec.transform(txt['te']), struct_te]).tocsr()
+    models, vec = fit_models(txt['tr'], y['tr'], txt['va'], y['va'], args, 'A',
+                             struct_tr=struct_tr, struct_va=struct_va)
+    Xva = stack(vec.transform(txt['va']), struct_va)
+    Xte = stack(vec.transform(txt['te']), struct_te)
 
     print()
     print("  [validation] 모델 선택")
@@ -277,28 +365,32 @@ def main():
     results['selected_model'] = best_name
 
     # -----------------------------------------------------------------------
-    rule("STEP 4. EXP-B  cross-source 전이 — v2 라벨 vs v3 라벨  ★핵심")
+    rule(f"STEP 4. EXP-B  cross-source 전이 — {old_tag} 라벨 vs {new_tag} 라벨  ★핵심")
     print("  한 소스로 배워 다른 소스를 맞힌다. source 교란이 제거된 진짜 일반화다.")
     print("  같은 행 · 같은 텍스트 · 같은 모델(LinearSVC)이고 라벨만 다르다.")
-    print("  라벨 수정이 옳았다면 v3의 QWK가 v2보다 높아야 한다.")
+    print(f"  라벨 수정이 옳았다면 {new_tag}의 QWK가 {old_tag}보다 높아야 한다.")
     print()
     loso = {}
     srcs = [s for s in meas['source'].unique() if (meas['source'] == s).sum() >= 500]
 
-    for label_col in ['y_v2', 'y_v3']:
+    tag_of = {'y_old': old_tag, 'y_new': new_tag}
+    for label_col in ['y_old', 'y_new']:
         loso[label_col] = {}
-        print(f"  [{label_col[-2:]} 라벨]")
+        print(f"  [{tag_of[label_col]} 라벨]")
         for src in srcs:
             tr_m, te_m = meas['source'] != src, meas['source'] == src
 
-            struct_tr_sub = build_struct_matrix(meas.loc[tr_m])
-            struct_te_sub = build_struct_matrix(meas.loc[te_m])
+            if use_struct:
+                struct_tr_sub = build_struct_matrix(meas.loc[tr_m])
+                struct_te_sub = build_struct_matrix(meas.loc[te_m])
+            else:
+                struct_tr_sub = struct_te_sub = None
 
             sub, sub_vec = fit_models(
                 conv(meas.loc[tr_m, 'raw_text'], meas.loc[tr_m, 'source']),
                 (meas.loc[tr_m, label_col] - 1).to_numpy(),
                 txt['va'], (va[label_col] - 1).to_numpy(),
-                args, f'B/{label_col[-2:]}/{src}', 
+                args, f'B/{tag_of[label_col]}/{src}',
                 struct_tr=struct_tr_sub, struct_va=struct_va,
                 skip_xgb=True,
                 use_text=not args.struct_only)
@@ -306,10 +398,9 @@ def main():
             if args.struct_only:
                 Xte_sub = struct_te_sub
             else:
-                Xte_sub = hstack([
-                    sub_vec.transform(conv(meas.loc[te_m, 'raw_text'], meas.loc[te_m, 'source'])),
-                    struct_te_sub
-                ]).tocsr()
+                Xte_sub = stack(sub_vec.transform(
+                    conv(meas.loc[te_m, 'raw_text'], meas.loc[te_m, 'source'])),
+                    struct_te_sub)
 
             pred = sub['linear_svc'].predict(Xte_sub)
             loso[label_col][src] = show(
@@ -320,23 +411,29 @@ def main():
     results['exp_b_loso'] = loso
 
     print("  === 전이 QWK 요약 ===")
-    print(f"    {'평가 대상':<14}{'v2 라벨':>10}{'v3 라벨':>10}{'변화':>10}")
+    print(f"    {'평가 대상':<14}{old_tag + ' 라벨':>10}{new_tag + ' 라벨':>10}{'변화':>10}")
     for src in srcs:
-        a, b = loso['y_v2'][src]['qwk'], loso['y_v3'][src]['qwk']
+        a, b = loso['y_old'][src]['qwk'], loso['y_new'][src]['qwk']
         print(f"    {src:<14}{a:>10.4f}{b:>10.4f}{b - a:>+10.4f}")
-    mv2 = float(np.mean([loso['y_v2'][s]['qwk'] for s in srcs]))
-    mv3 = float(np.mean([loso['y_v3'][s]['qwk'] for s in srcs]))
+    mv2 = float(np.mean([loso['y_old'][s]['qwk'] for s in srcs]))
+    mv3 = float(np.mean([loso['y_new'][s]['qwk'] for s in srcs]))
     print(f"    {'평균':<14}{mv2:>10.4f}{mv3:>10.4f}{mv3 - mv2:>+10.4f}")
-    results['exp_b_summary'] = {'mean_qwk_v2': mv2, 'mean_qwk_v3': mv3}
+    results['exp_b_summary'] = {f'mean_qwk_{old_tag}': mv2, f'mean_qwk_{new_tag}': mv3}
 
     # -----------------------------------------------------------------------
-    rule("STEP 5. EXP-C  어휘 폴백 대체 검증 (v3 라벨)")
+    rule(f"STEP 5. EXP-C  어휘 폴백 검증 ({new_tag} 라벨)")
     print("  measurable hold-out을 '메타데이터 없는 상태'로 두고 같은 정답 위에서 비교한다.")
+    # 상수는 train 라벨 중앙값을 쓴다. v2는 '항상 3점'과 비교했는데 그건 MAE를
+    # 최소화하는 상수가 아니라 모델에 유리한 기준이었다(v3에서 고친 것).
+    # 여기도 같은 규약을 적용한다 — 폴백을 후하게 봐줄 이유가 없다.
+    const = int(np.median(y['tr']))
+    print(f"  상수 베이스라인 = train 라벨 중앙값 ({const + 1}점)")
     print()
     fb = np.array([score_by_vocabulary(t)[0] - 1 for t in te['raw_text']])
     results['exp_c'] = {
-        'always_3': show('상수 baseline (항상 3점)', y['te'], np.full(len(y['te']), 2)),
-        'vocab_fallback': show('현행 어휘 폴백', y['te'], fb),
+        'constant': show(f'상수 baseline ({const + 1}점)', y['te'],
+                         np.full(len(y['te']), const)),
+        'vocab_fallback': show(f'어휘 폴백 ({new_tag})', y['te'], fb),
     }
 
     # -----------------------------------------------------------------------
@@ -365,20 +462,34 @@ def main():
     print()
     print(f"    모델 QWK {final['qwk']:.4f}  vs  어휘 폴백 "
           f"{results['exp_c']['vocab_fallback']['qwk']:.4f}  vs  상수 "
-          f"{results['exp_c']['always_3']['qwk']:.4f}")
+          f"{results['exp_c']['constant']['qwk']:.4f}")
+    print(f"    모델 MAE {final['mae']:.4f}  vs  상수 "
+          f"{results['exp_c']['constant']['mae']:.4f}")
 
     # -----------------------------------------------------------------------
     rule("STEP 7. 저장")
-    out = SMOKE_DIR if (args.sample or args.skip_xgb) else OUT_DIR
+    base_out = HERE / cfg['out']
+    if args.sample or args.skip_xgb:
+        out = HERE / f"{cfg['out']}_smoke"
+        note = "축소 실행이므로"
+    elif use_struct:
+        out = HERE / f"{cfg['out']}_struct"
+        note = f"구조화 피처 실험이므로 (정본 {base_out.name}/ 은 건드리지 않는다)"
+    else:
+        out, note = base_out, None
     out.mkdir(parents=True, exist_ok=True)
-    if out is SMOKE_DIR:
-        print(f"  [!] 축소 실행이므로 {out.name}/ 에 저장")
+    if note:
+        print(f"  [!] {note} {out.name}/ 에 저장")
     joblib.dump(best, out / "urgency_model.joblib")
     joblib.dump(vec, out / "urgency_tfidf.joblib")
     (out / "model_meta.json").write_text(json.dumps({
-        'rule_version': 'v3',
-        'data': DATA_V3.name,
+        'rule_version': new_tag,
+        'data': cfg['new'][1],
+        'compared_against': old_tag,
         'variant': VARIANT,
+        # 추론 쪽(urgency_model.py)이 같은 피처 행렬을 다시 만들려면 이 목록이
+        # 필요하다. null 이면 TF-IDF만 쓴 정본 모델이라는 뜻.
+        'struct_features': STRUCT_FEATURE_NAMES if use_struct else None,
         'model': best_name,
         'prediction': mode,
         'model_selection': 'validation QWK (test는 최종 1회만)',

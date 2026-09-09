@@ -22,7 +22,8 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
 import scraper  # noqa: E402
-from urgency_rule import LEVEL_LABEL, clean_body, score_posting  # noqa: E402
+from urgency_rule import (LEVEL_LABEL, RULE_VERSION,  # noqa: E402
+                          clean_body, score_posting)
 
 # ---------------------------------------------------------
 # 브랜드 팔레트 — 1번 프로젝트(.streamlit/config.toml)와 1:1로 맞춘 상수
@@ -485,6 +486,16 @@ with tab_limit:
     if MODEL is not None:
         m = MODEL.test_metrics
         t = MODEL.transfer_summary
+        # 규칙과 모델의 라벨 버전은 갈릴 수 있다(규칙은 코드, 모델은 재학습
+        # 시점에 고정). 어느 쪽을 보고 있는지 화면에서 말해준다.
+        model_ver = MODEL.meta.get('rule_version', '?')
+        if model_ver != RULE_VERSION:
+            st.warning(
+                f"규칙은 **{RULE_VERSION}**, 모델은 **{model_ver}** 라벨로 학습돼 있습니다. "
+                f"규칙이 주 결과이므로 채점은 정상이지만, 모델 점수는 한 버전 뒤의 "
+                f"라벨을 근사한 값입니다. 2-1에서 재학습하면 맞춰집니다.")
+        else:
+            st.caption(f"규칙 · 모델 모두 {RULE_VERSION} 라벨 기준입니다.")
         if m:
             cols = st.columns(5)
             for col, (k, label) in zip(cols, [
@@ -499,13 +510,18 @@ with tab_limit:
                 f'</div>', unsafe_allow_html=True)
             st.write("")
         if t:
-            st.markdown(
-                f"**cross-source 전이 QWK(평균)** — v2 라벨 `{t['mean_qwk_v2']:.4f}` → "
-                f"v3 라벨 `{t['mean_qwk_v3']:.4f}` "
-                f"(`{t['mean_qwk_v3'] - t['mean_qwk_v2']:+.4f}`). "
-                f"라벨 수정의 효과는 확인됐지만 **여전히 쓸 수 있는 수준은 아닙니다** "
-                f"— 아래 한계 3 참조.")
-            st.write("")
+            # 키 이름에 라벨 버전이 들어간다(mean_qwk_v2 / _v3 / _v4 ...).
+            # 버전을 하드코딩하면 재학습 때마다 앱이 KeyError로 죽는다.
+            pairs = sorted((k.replace('mean_qwk_', ''), v) for k, v in t.items()
+                           if k.startswith('mean_qwk_'))
+            if len(pairs) == 2:
+                (old_tag, old_v), (new_tag, new_v) = pairs
+                st.markdown(
+                    f"**cross-source 전이 QWK(평균)** — {old_tag} 라벨 `{old_v:.4f}` → "
+                    f"{new_tag} 라벨 `{new_v:.4f}` (`{new_v - old_v:+.4f}`). "
+                    f"라벨 수정의 효과는 확인됐지만 **여전히 쓸 수 있는 수준은 아닙니다** "
+                    f"— 아래 한계 3 참조.")
+                st.write("")
 
     st.markdown("""
 ### 확인된 한계

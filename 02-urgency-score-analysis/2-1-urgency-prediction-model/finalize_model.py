@@ -33,8 +33,8 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
 
 from rescore_urgency import is_measurable  # noqa: E402
-from train_urgency_baseline import (LOCAL_DATA, N_CLASSES,  # noqa: E402
-                                    RANDOM_STATE, dedup_and_group, evaluate,
+from train_urgency_baseline import (N_CLASSES, RANDOM_STATE,  # noqa: E402
+                                    data_path, dedup_and_group, evaluate,
                                     make_transform, rule)
 
 MODEL_DIR = HERE / "models_transfer"
@@ -45,7 +45,7 @@ TEST_FOLDS = 5
 def rebuild_test_split():
     """train_urgency_transfer.py와 동일한 test 집합을 재현한다.
     (시드/분할 규칙이 결정론적이라 그대로 재현된다)"""
-    with open(LOCAL_DATA, encoding='utf-8') as f:
+    with open(data_path(), encoding='utf-8') as f:
         df = pd.DataFrame(json.load(f))
     df['raw_text'] = df['raw_text'].fillna('').astype(str)
     df['source'] = df['source'].fillna('unknown').astype(str)
