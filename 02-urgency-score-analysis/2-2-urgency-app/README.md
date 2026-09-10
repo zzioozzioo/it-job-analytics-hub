@@ -118,19 +118,33 @@ streamlit run app.py
 
 ```
 2-2-urgency-app/
-├── app.py                 Streamlit 앱 (분석 / 어떻게 만들었나 / 한계와 개선점)
-├── scraper.py             URL -> 학습 데이터 형식의 raw_text
-├── reference_stats.json   데이터셋 분포 (점수의 상대 위치 표시용, 사전 계산)
+├── app.py                    Streamlit 앱 (분석 / 어떻게 만들었나 / 한계와 개선점)
+├── scraper.py                URL -> 학습 데이터 형식의 raw_text
+├── build_reference_stats.py  아래 분포 파일을 만드는 스크립트
+├── reference_stats.json      데이터셋 분포 (점수의 상대 위치 표시용, 사전 계산)
 ├── requirements.txt
-└── .streamlit/config.toml 1번 프로젝트와 동일 팔레트
+└── .streamlit/config.toml    1번 프로젝트와 동일 팔레트
 ```
 
 의존 모듈 (상위 디렉터리 공유):
-- [`../urgency_rule.py`](../urgency_rule.py) — 라벨 규칙 v3
-- [`../urgency_model.py`](../urgency_model.py) — v3 모델 추론 인터페이스
+- [`../urgency_rule.py`](../urgency_rule.py) — 라벨 규칙 v4
+- [`../urgency_model.py`](../urgency_model.py) — 모델 추론 인터페이스
+  (`models_v4/` 우선, 없으면 `models_v3/`)
 
-모델(`../2-1-urgency-prediction-model/models_v3/`)이 없어도 앱은 동작한다.
+모델(`../2-1-urgency-prediction-model/models_v4/`)이 없어도 앱은 동작한다.
 규칙만으로 채점하고 모델 칸에 사유를 표시한다.
+
+규칙과 모델의 라벨 버전이 어긋나면(`RULE_VERSION` vs `MODEL.meta['rule_version']`)
+앱이 "한계와 개선점" 탭에 경고를 띄운다. 규칙은 코드라 즉시 바뀌고 모델은 재학습
+시점에 고정되므로, 어느 쪽을 보고 있는지 화면에서 말해준다.
+
+**`reference_stats.json`은 이 검사에 포함돼 있지 않다.** 버전이 어긋나도 앱은
+아무 말 없이 옛 분포로 백분위를 계산한다.
+
+> ⚠️ 그래서 **라벨을 다시 만들면 `python build_reference_stats.py --write`도
+> 반드시 함께 돌린다.** 손으로 고치지 말 것. 전에 이 파일만 생성 스크립트 없이
+> 놓여 있어서, 라벨이 v4가 된 뒤에도 v3 분포인 채 남아 앱이 조용히 틀린
+> 백분위를 보여줬다.
 
 ---
 

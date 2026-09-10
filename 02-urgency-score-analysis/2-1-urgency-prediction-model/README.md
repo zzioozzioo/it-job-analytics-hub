@@ -48,21 +48,29 @@ IT 채용공고 본문에서 **채용 적극성**(마감 임박도·모집 규�
 - 메타데이터가 없는 공고 (전체의 24.2%) — 아래 "한계" 참조
 - 학습에 없던 채용 사이트 — cross-source 전이가 실패한다 (v4에서도 상수보다 MAE가 나쁘다, 아래 참조)
 
-> **먼저 규칙을 고려할 것.** 메타데이터가 있는 공고라면 `rescore_urgency.py`를
-> 그대로 돌리는 편이 낫다. 라벨 자체가 그 규칙의 출력이므로 규칙은 정의상 정답을 주고,
-> `urgency_reason`으로 근거 문장까지 나온다. 이 모델은 그 규칙의 근사치이며,
-> 규칙을 쓸 수 없는 상황의 참고값과 연구 재현이 용도다.
+> **먼저 규칙을 고려할 것.** 메타데이터가 있는 공고라면
+> [`../urgency_rule.py`](../urgency_rule.py)(v4)를 그대로 돌리는 편이 낫다.
+> 라벨 자체가 그 규칙의 출력이므로 규칙은 정의상 정답을 주고, `urgency_reason`으로
+> 근거 문장까지 나온다. 이 모델은 그 규칙의 근사치이며, 규칙을 쓸 수 없는 상황의
+> 참고값과 연구 재현이 용도다.
+>
+> 루트 `rescore_urgency.py`는 **v2 보존본**이다. 규칙의 단일 출처가 아니므로
+> 비교 기준으로만 쓴다.
 
 ### 사용법
 
 `.joblib`을 직접 로드하면 안 된다. `predict()`가 argmax를 돌려주므로 위 성능이
 재현되지 않는다. 최종 예측 방식(기댓값 반올림)과 전처리(`masked+clean`)를 함께
-묶어둔 `predict_urgency.py`를 쓴다.
+묶어둔 [`../urgency_model.py`](../urgency_model.py)를 쓴다. 앱도 이것을 쓴다.
+
+> ⚠️ 같은 폴더의 `predict_urgency.py`는 **v2 모델(`models_transfer/`)을 로드하는
+> v2 시절 인터페이스**다. v4 점수를 원하면 아래 `UrgencyModel`을 쓸 것.
 
 ```python
-from predict_urgency import UrgencyPredictor
+import sys; sys.path.insert(0, '..')
+from urgency_model import UrgencyModel
 
-p = UrgencyPredictor()
+p = UrgencyModel()                      # models_v4/ 우선, 없으면 models_v3/
 p.predict(["공고 본문 ...", "..."], ["saramin", "jobkorea"])
 # array([2, 4])   1~5점
 
@@ -75,15 +83,18 @@ p.predict_with_scope(texts, sources)
 `in_scope=False`는 그 공고에 메타데이터가 없어 모델이 검증되지 않은 영역이라는
 뜻이다. 이 플래그를 무시하지 말 것.
 
+`p.meta['rule_version']`으로 이 모델이 어느 라벨로 학습됐는지 확인할 수 있다.
+
 ```bash
-python predict_urgency.py    # 자기검증: 저장된 최종 성능이 재현되는지 확인
+python predict_urgency.py    # v2 모델 자기검증 (저장된 v2 최종 성능 재현 확인)
 ```
 
 ---
 
 ## 어떻게 여기까지 왔나
 
-라벨 `urgency_score`는 `rescore_urgency.py`가 본문에서 정규식으로 만든 **결정론적 값**이다. 즉 `라벨 = f(raw_text)`이고, 그 `f`가 읽은 구간이 학습 피처에 그대로 들어 있었다. 이 상태의 높은 점수는 "시급성을 예측했다"가 아니라 **"정규식을 역공학했다"** 에 가깝다.
+라벨 `urgency_score`는 규칙(당시 `rescore_urgency.py` = v2, 현재 `../urgency_rule.py` = v4)이
+본문에서 정규식으로 만든 **결정론적 값**이다. 즉 `라벨 = f(raw_text)`이고, 그 `f`가 읽은 구간이 학습 피처에 그대로 들어 있었다. 이 상태의 높은 점수는 "시급성을 예측했다"가 아니라 **"정규식을 역공학했다"** 에 가깝다.
 
 통제를 하나씩 넣으면서 점수가 어떻게 움직였는지:
 
@@ -183,9 +194,11 @@ measurable hold-out을 "메타데이터 없는 상태"로 두고, 같은 정답 
 
 > ⚠️ **v4에서 이 2.7배가 5.2배로 벌어진다.** `채용 시 마감`의 이중 계상을 걷어내니
 > saramin 상위 비율이 2.0% → 0.9%로 내려갔다. 즉 2.7배의 일부는 양쪽 소스에
-> 똑같이 걸려 있던 버그가 떠받치고 있었다. 아래 성능 수치는 전부 v3 라벨 기준이며
-> 재학습 전까지 유효하다. 근거는 [02 README](../README.md)의 "라벨 규칙 v4에서
-> 고친 것" 절.
+> 똑같이 걸려 있던 버그가 떠받치고 있었다. 근거는 [02 README](../README.md)의
+> "라벨 규칙 v4에서 고친 것" 절.
+>
+> **이 절(v3) 아래의 성능 수치는 전부 v3 라벨 기준의 기록이다.** 재학습은 끝났고
+> 현재 정본은 `models_v4/`이며, 그 수치는 이 문서 맨 위 "최종 모델 (v4)" 절에 있다.
 
 ### 진단이 맞았나 — cross-source 전이
 
@@ -291,21 +304,26 @@ Macro F1 0.1301을 내주고 세운 마스킹 통제를, 이 피처가 그대로
   v2 대비 비교가 오염되므로 이번 라운드에서는 두었다.
   → **v4에서 고쳤다.** measurable의 9.3%에서 발동하고 있었고 1,993행(6.5%)의
   등급이 내려갔다. v2 대비 비교가 끝나 보류 사유가 사라졌기 때문이다.
-  아직 재학습하지 않았으므로 `models_v3/`와 아래 성능 수치는 v3 라벨 기준이다.
+  **재학습도 끝났다**(`models_v4/`, 690.6초) — 정본은 `models_v4/`이고, 그 성능은
+  이 문서 맨 위 "최종 모델 (v4)" 절에 있다. 아래 성능 수치는 v3 라벨 기준의 기록이다.
 
 ---
 
 ## 파일
 
 **모델**
-- `models_v3/` — **현재 최종 모델**. v3 라벨, measurable 학습, 기댓값 예측
-- `models_v3_struct/` — 구조화 피처 실험 산출물. **배포용이 아니다** (아래 참조)
+- `models_v4/` — **현재 최종 모델. 앱이 로드하는 정본.** v4 라벨, measurable 학습, 기댓값 예측
+- `models_v3/` — v3 최종 모델 (비교 기준으로 보존)
+- `models_v3_struct/` · `models_v4_struct/` — 구조화 피처 실험 산출물.
+  **배포용이 아니다** (라벨 누출이 있다 — 아래 참조). `.joblib`은 커밋하지 않고 meta만 남긴다
 - `models_transfer/` — v2 최종 모델 (비교 기준으로 보존)
 - `models_baseline/` — 통제 조건 4종 비교용. 전체 데이터 학습
 - `models/` — v1 (참고용, 거품 포함)
 
 **추론**
-- `predict_urgency.py` — **최종 추론 인터페이스**. 전처리 + 기댓값 예측 + 범위 플래그
+- `../urgency_model.py` — **현행 추론 인터페이스.** 전처리 + 기댓값 예측 + 범위 플래그.
+  `models_v4/` 우선 로드. 앱도 이것을 쓴다
+- `predict_urgency.py` — v2 시절 인터페이스(`models_transfer/` 고정). 보존용
 
 **학습·분석 스크립트**
 - `train_urgency_model.py` — v1
@@ -337,10 +355,17 @@ Macro F1 0.1301을 내주고 세운 마스킹 통제를, 이 피처가 그대로
 ## 재현
 
 ```bash
-# v3 (현재)
-python ../urgency_rule.py --write   # 라벨 재생성
-python train_urgency.py          # 학습 + v2 대비 전이 비교 (약 11분) -> models_v3/
-python compare_labels.py             # 상수 대비 재측정 (약 1분)
+# v4 (현재)
+python ../urgency_rule.py --write       # 라벨 재생성 (약 2분)
+python ../test_urgency_rule.py          # 규칙 회귀 테스트 16종
+python calibrate_fallback.py --grid     # 폴백 재보정 근거 (약 1분)
+python train_urgency.py --v4            # 학습 + v3 대비 전이 비교 (약 11.5분) -> models_v4/
+python compare_labels.py --v4           # 상수 대비 재측정 (약 1분)
+# 라벨을 바꿨으면 ../2-2-urgency-app/build_reference_stats.py --write 도 함께 돌릴 것
+
+# v3 (보존용 재현)
+python train_urgency.py                 # 학습 + v2 대비 전이 비교 -> models_v3/
+python compare_labels.py                # 상수 대비 재측정
 
 # 구조화 피처 실험 (배포용 아님, models_v3_struct/ 로 나간다)
 python train_urgency.py --struct       # TF-IDF + 구조화 피처

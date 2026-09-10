@@ -399,7 +399,7 @@ v3 재현치(−30.1% / 0.1307)가 위에서 보고한 값과 그대로 나오�
 나지 않는** 종류다.
 
 ```bash
-python test_urgency_rule.py     # 11 케이스, pytest 불필요
+python test_urgency_rule.py     # 16 케이스, pytest 불필요
 ```
 
 새로 만든 케이스가 아니라 실제로 한 번씩 틀렸던 것을 문자열로 옮겼다 —

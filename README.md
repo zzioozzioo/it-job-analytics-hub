@@ -180,7 +180,7 @@ Streamlit 앱입니다.
 
 ## 4. 이력서 맞춤형 AI 첨삭
 
-**📂 폴더**: `04-resume-ai-feedback`
+**📂 폴더**: `04-resume-ai-feedback` (**미착수 — 폴더도 아직 없습니다**)
 
 LLM을 활용하여 이력서 내용을 분석하고, 지원하고자 하는 직군/공고에 맞춘 첨삭 피드백을
 제공합니다.
@@ -188,6 +188,12 @@ LLM을 활용하여 이력서 내용을 분석하고, 지원하고자 하는 직
 - 이력서 구조 분석 (경력, 프로젝트, 기술 스택 등)
 - 목표 공고와의 갭 분석
 - 문장 표현, 강조 포인트, 누락 정보 등에 대한 첨삭 제안
+
+> **아직 정해지지 않은 것을 적어둡니다.** 쓸 LLM이 미정이고, 그보다 **첨삭 품질을
+> 무엇으로 평가할지가 공백입니다.** 02번에서 "평가 설계가 없으면 점수가 거품이
+> 된다"를 한 번 겪었고(Macro F1 0.8595 중 0.1975가 거품), 03번도 평가
+> 프록시(`eval_proxy.py`)를 병목으로 잡아두고 있습니다. 04번은 착수 전에 같은
+> 질문을 먼저 답해야 합니다.
 
 ---
 
@@ -235,14 +241,24 @@ it-job-analytics-hub/
 │       ├── build_reference_stats.py     # 앱이 쓰는 분포 파일 재생성
 │       └── requirements.txt
 ├── 03-resume-job-matching/              # 진행 중 (스킬 매칭 브리프 · 사람인 백필)
-├── 04-resume-ai-feedback/               # 예정
 ├── common/
 │   ├── hf_data.py                       # 데이터 접근 단일 출처 (로컬 우선)
 │   └── tech_normalize.py                # 기술명 정규화 단일 출처
+├── build_master_dataset.py              # 소스 3개 -> data/master_merged.json 병합
 ├── rescore_urgency.py                   # 라벨 규칙 v2 — 이후 버전의 비교 기준
 ├── requirements.txt                     # 전체 의존성 (앱 폴더에도 각각 있음)
 └── README.md
 ```
+
+`04-resume-ai-feedback/`는 **아직 만들지 않았습니다.** 착수할 때 만듭니다
+(위 [4번 절](#4-이력서-맞춤형-ai-첨삭) 참조).
+
+`build_master_dataset.py`는 크롤링 산출물 3개(`wanted_cleaned_techs2.json` ·
+`jobkorea_cleaned_techs2.json` · `saramin_cleaned_techs2.json`)를 프로젝트
+1~4번이 공통으로 쓰는 `data/master_merged.json` 하나로 병합합니다. 소스마다
+다른 컬럼명·경력 표기를 통합 스키마로 맞추는 곳이라, **데이터의 출처를 되짚을
+수 있는 유일한 파일**입니다. 데이터 자체는 git에서 제외돼 있지만 이 스크립트는
+소스이므로 커밋합니다.
 
 > `requirements.txt`가 루트와 각 앱 폴더에 모두 있습니다. 루트 것은 저장소 전체를
 > 돌리기 위한 합집합이고, 앱 폴더 것은 그 앱에 필요한 것만 담고 있습니다
