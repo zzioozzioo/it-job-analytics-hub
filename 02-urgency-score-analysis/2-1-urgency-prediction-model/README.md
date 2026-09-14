@@ -286,8 +286,9 @@ Macro F1 0.1301을 내주고 세운 마스킹 통제를, 이 피처가 그대로
 일반화가 아니라 되돌아온 누출이다. 게다가 모델이 정작 필요한 unmeasurable 구간에서는
 이 피처들이 **94.1%가 전부 0**이라(피처 벡터 15종뿐) 아무것도 주지 못한다.
 
-그래서 `--struct` / `--struct-only` 실험 플래그 뒤에 두고, 결과는
-`models_v3_struct/`에 저장한다. 정본 `models_v3/`는 통제가 걸린 모델로 유지된다.
+그래서 `--struct` / `--struct-only` 실험 플래그 뒤에 두고, 결과는 라운드별
+`models_<라운드>_struct/`에 저장한다(`--v4`면 `models_v4_struct/`). 정본
+**`models_v4/`**는 통제가 걸린 모델로 유지된다 — 위 수치는 v3 라운드에서 잰 것이다.
 실측 표와 마스킹 패턴 대조는 [02 README](../README.md)의 "곁가지 — 구조화 피처" 절에 있다.
 
 ### v3에서 못 고친 것
@@ -314,8 +315,12 @@ Macro F1 0.1301을 내주고 세운 마스킹 통제를, 이 피처가 그대로
 **모델**
 - `models_v4/` — **현재 최종 모델. 앱이 로드하는 정본.** v4 라벨, measurable 학습, 기댓값 예측
 - `models_v3/` — v3 최종 모델 (비교 기준으로 보존)
-- `models_v3_struct/` · `models_v4_struct/` — 구조화 피처 실험 산출물.
-  **배포용이 아니다** (라벨 누출이 있다 — 아래 참조). `.joblib`은 커밋하지 않고 meta만 남긴다
+- `models_v3_smoke/` · `models_v4_smoke/` — `--sample`·`--skip-xgb` 축소 실행 산출물.
+  **성능 수치의 출처가 아니다** (XGBoost를 건너뛰거나 일부 행만 쓴 결과다). 커밋하지 않는다
+- `models_v3_struct/` · `models_v4_struct/` — 구조화 피처 실험(`--struct`)을 돌리면
+  **생기는** 위치. **배포용이 아니다**(라벨 누출이 있다 — 아래 참조).
+  커밋하지 않으므로 클론한 저장소에는 없다. **실행 로그도 남기지 않았다** —
+  02 README의 실험 표가 유일한 기록이고, 재현하려면 아래 플래그로 다시 돌려야 한다
 - `models_transfer/` — v2 최종 모델 (비교 기준으로 보존)
 - `models_baseline/` — 통제 조건 4종 비교용. 전체 데이터 학습
 - `models/` — v1 (참고용, 거품 포함)
@@ -367,7 +372,7 @@ python compare_labels.py --v4           # 상수 대비 재측정 (약 1분)
 python train_urgency.py                 # 학습 + v2 대비 전이 비교 -> models_v3/
 python compare_labels.py                # 상수 대비 재측정
 
-# 구조화 피처 실험 (배포용 아님, models_v3_struct/ 로 나간다)
+# 구조화 피처 실험 (배포용 아님, models_v3_struct/ 로 나간다. --v4 면 models_v4_struct/)
 python train_urgency.py --struct       # TF-IDF + 구조화 피처
 python train_urgency.py --struct-only  # 전이를 구조화 피처만으로 (ablation)
 

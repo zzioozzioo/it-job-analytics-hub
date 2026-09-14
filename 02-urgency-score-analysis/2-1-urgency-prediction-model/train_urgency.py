@@ -72,8 +72,9 @@ v4가 고친 것(`urgency_rule.py` [수정 3][수정 4]):
 뛰지만 그건 통제가 걷어냈던 누출이 되돌아온 것이다. 규칙을 선형모델로
 재현한 것이지 일반화가 아니다(2-1/02 README의 ablation 참조).
 
-그래서 실험 플래그로만 두고, 켜면 결과를 models_v3_struct/ 에 저장한다.
-앱이 로드하는 정본 models_v3/ 는 통제가 걸린 모델로 유지된다.
+그래서 실험 플래그로만 두고, 켜면 결과를 models_<라운드>_struct/ 에 저장한다
+(--v4 면 models_v4_struct/). 정본 디렉터리는 건드리지 않는다.
+앱이 로드하는 정본 models_v4/ 는 통제가 걸린 모델로 유지된다.
 """
 
 import argparse
@@ -111,8 +112,8 @@ from common.hf_data import (MASTER_V2, MASTER_V3,  # noqa: E402
 #   new = 학습·저장 대상,  old = EXP-B에서 나란히 놓을 직전 버전
 # 경로가 아니라 **파일명**을 들고 있다가 common.hf_data.fetch()로 연다.
 # fetch()가 "data/에 있으면 그것, 없으면 data/로 다운로드, 둘 다 안 되면
-# 만드는 명령 안내"를 한 곳에서 처리한다. v4는 허깅페이스에 없으므로
-# (--write 산출물) 라벨을 안 만들고 --v4 를 돌리면 그 안내가 나온다.
+# 만드는 명령 안내"를 한 곳에서 처리한다. v4 라벨은 --write 산출물이지만
+# 2026-09-14에 허깅페이스에도 올렸으므로, 로컬에 없어도 그냥 받아진다.
 ROUNDS = {
     'v3': {'new': ('v3', MASTER_V3), 'old': ('v2', MASTER_V2), 'out': 'models_v3'},
     'v4': {'new': ('v4', MASTER_V4), 'old': ('v3', MASTER_V3), 'out': 'models_v4'},
@@ -299,7 +300,7 @@ def main():
     ap.add_argument('--skip-xgb', action='store_true')
     ap.add_argument('--struct', action='store_true',
                     help='[실험] TF-IDF 옆에 구조화 피처 11개를 붙인다. '
-                         '기본값 꺼짐 — 켜면 models_v3_struct/ 에 저장된다')
+                         '기본값 꺼짐 — 켜면 models_<라운드>_struct/ 에 저장된다')
     ap.add_argument('--struct-only', action='store_true',
                     help='[실험] EXP-B(전이)를 TF-IDF 없이 구조화 피처 11개만으로 '
                          '돌리는 ablation. --struct 를 함께 켠 것으로 취급한다')

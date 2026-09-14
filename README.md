@@ -247,6 +247,7 @@ it-job-analytics-hub/
 ├── build_master_dataset.py              # 소스 3개 -> data/master_merged.json 병합
 ├── rescore_urgency.py                   # 라벨 규칙 v2 — 이후 버전의 비교 기준
 ├── requirements.txt                     # 전체 의존성 (앱 폴더에도 각각 있음)
+├── LICENSE                              # MIT (코드에만 적용 — 아래 라이선스 절 참조)
 └── README.md
 ```
 
@@ -298,8 +299,8 @@ streamlit run app.py
 
 데이터셋은 `data/`에 없으면 **`data/` 안으로 자동 다운로드**됩니다
 (`common/hf_data.py`). 별도 캐시를 쓰지 않으므로 같은 파일이 두 벌 쌓이지
-않습니다. 다만 라벨 파일 `master_merged_v4.json`은 규칙의 산출물이라,
-없으면 만드는 명령을 안내합니다.
+않습니다. 라벨 파일 `master_merged_v4.json`은 규칙(`urgency_rule.py --write`)의
+산출물이지만 허깅페이스에도 올려두었으므로, 아래 재생성 없이도 받아집니다.
 
 ```bash
 # 라벨 재생성 -> 규칙 회귀 테스트 -> 재학습
@@ -325,4 +326,12 @@ cd 02-urgency-score-analysis/2-1-urgency-prediction-model && python train_urgenc
 
 ## 라이선스
 
-(라이선스 정보 기입, 예: MIT License)
+**코드는 [MIT License](LICENSE)** 입니다. 자유롭게 쓰고 고치고 재배포할 수 있으며,
+저작권 표시만 남겨 주세요.
+
+**데이터는 여기에 포함되지 않습니다.** `data/`의 채용공고 본문은 사람인·잡코리아·
+원티드에서 수집한 것이고 각 사이트와 채용 기업에 권리가 있습니다. 이 저장소는
+데이터를 커밋하지 않으며(`.gitignore`), 허깅페이스
+(`data-craftee/korean-it-recruit-dataset`)에 올려둔 것도 연구·재현 목적입니다.
+상업적 재배포 전에는 각 사이트 이용약관을 확인하세요. MIT는 이 저장소의 코드에만
+적용됩니다.
