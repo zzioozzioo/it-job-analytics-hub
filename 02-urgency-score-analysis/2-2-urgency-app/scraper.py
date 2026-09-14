@@ -149,7 +149,18 @@ def _get(url: str, referer: str | None = None) -> str:
         raise ScrapeError(f"접속 실패: {type(e).__name__}") from e
     if r.status_code != 200:
         raise ScrapeError(f"HTTP {r.status_code} — 삭제되었거나 접근이 막힌 공고입니다.")
-    r.encoding = r.apparent_encoding or r.encoding
+    # 서버가 헤더로 선언한 charset을 우선한다. 추측(apparent_encoding)은 선언이
+    # 없을 때만 쓴다. 반대로 두면 본문에 UTF-8로 디코딩되지 않는 바이트가 하나만
+    # 섞여도 charset_normalizer가 utf-8을 버리고 다른 인코딩(cp775 등)을 골라
+    # **페이지의 한글이 통째로** 깨진다. 예외는 나지 않으므로 규칙이 접수기간·
+    # 모집인원을 못 찾고 조용히 폴백 점수가 나간다.
+    #   실측: 잘못된 바이트 1개를 섞으면 추측=cp775,
+    #        '모집인원 3명' -> 'ļ¬©ņ¦æņØĖņøÉ 3ļ¬ģ'
+    #        선언(UTF-8)을 쓰면 그 한 글자만 U+FFFD가 되고 나머지는 살아남는다.
+    # 예전 requests는 charset 없는 text/* 에 ISO-8859-1을 기본값으로 넣어서
+    # 추측으로 덮는 우회가 필요했지만, 2.32부터는 None을 돌려주므로
+    # 아래 `or` 폴백이 그 자리를 대신한다 (설치본 2.34.2에서 확인).
+    r.encoding = r.encoding or r.apparent_encoding
     return r.text
 
 
