@@ -50,13 +50,35 @@ job_pool.py — 03이 쓰는 공고 데이터의 **단일 출처**.
 
     open     마감일이 as_of 이후
     closed   마감일이 지남
-    rolling  상시·수시채용 (마감일 개념이 없음)
+    rolling  마감일에 매이지 않는 공고 — 두 갈래를 **모두** 본다
+               · `채용 시 마감`류   (RX_ROLLING)       마감일은 있으나 조기 종료
+               · `상시·수시채용`류 (is_always_open()) 마감일 자체가 없음
     unknown  마감일을 못 읽음 — '열려 있다'는 뜻이 **아니다**
 
-현 스냅샷(2026.06~07 수집) 기준 실측:
-    as_of=2026-06-20 → open 15,500건 / as_of=2026-09-14 → open 2건
-즉 오늘 기준으로는 추천이 성립하지 않는다. 이건 코드가 아니라 입력의 문제이고,
-`as_of`를 과거로 두면 필터와 순위가 정상 동작하는 것으로 확인할 수 있다.
+⚠️ 이 목록은 한동안 거짓말이었다. 위 `rolling` 줄은 처음부터 '상시·수시채용'을
+약속하고 있었는데 `parse_deadline()`은 `RX_ROLLING`만 봤다 — 약속의 한쪽을
+코드가 아예 구현하지 않은 상태였고, 예외가 나지 않으니 드러나지 않았다.
+`only_open=True`에서 진짜 상시채용 공고가 조용히 후보에서 빠지고 있었다.
+
+    수정 전   jobkorea rolling     18건
+    수정 후   jobkorea rolling  1,281건      (unknown 2,430 -> 1,167)
+    only_open=True 후보  22,713 -> 23,979건  (as_of=2026-06-20)
+
+고칠 때 `RX_ALWAYS_OPEN`을 본문 전체에 돌리면 **더 크게 틀린다.** jobkorea
+10,025건 중 8,202건(81.8%)이 걸리는데 대부분 본문 꼬리의 추천공고 목록,
+즉 **남의 공고 접수 조건**이다. 그래서 판정은 반드시 `U.is_always_open()`을
+거친다(접수 조건 필드에만 앵커를 둔다). 근거와 실측은 `urgency_rule.py`의
+'2-1. 상시·수시채용' 절. 회귀 테스트는 `test_job_pool.py`.
+
+현 스냅샷(2026.06~07 수집, 백필 후 풀 39,668건) 기준 실측:
+
+    as_of         open   rolling    closed   unknown   only_open
+    2026-06-20  22,690     1,289    10,117     5,572      23,979
+    2026-09-14      62     1,289    32,745     5,572       1,351
+
+즉 오늘 기준으로 마감일이 살아 있는 공고는 62건뿐이고, 남는 것은 사실상
+상시채용(1,289건)이다. 이건 코드가 아니라 입력의 문제이고, `as_of`를 과거로
+두면 필터와 순위가 정상 동작하는 것으로 확인할 수 있다.
 
 ---------------------------------------------------------------------------
 사용법
@@ -125,21 +147,53 @@ def _date(y, m, d):
         return None
 
 
+def _rolling(text: str, seg: str = None) -> bool:
+    """rolling = '마감일이라는 개념이 없는 공고'. 두 갈래를 **모두** 본다.
+
+    ⚠️ 전에는 `U.RX_ROLLING`(= `채용 시 마감`류)만 봤다. 그런데 docstring은
+    rolling을 '상시·수시채용'이라고 적고 있었다 — 문서가 약속한 것의 한쪽을
+    코드가 아예 구현하지 않은 상태였고, 그 결과 진짜 상시채용 공고 1,264건이
+    `unknown`으로 떨어져 `only_open=True`에서 조용히 사라졌다(아래 실측).
+
+    두 갈래는 다른 것을 뜻한다. 합치지 않고 둘 다 rolling으로 친다:
+        RX_ROLLING       '채용 시 마감'  — 마감일은 있으나 충원되면 조기 종료
+        is_always_open() '상시·수시채용' — 마감일 자체가 없음
+
+    상시채용 판정은 반드시 `U.is_always_open()`을 거친다. 정규식을 직접
+    본문 전체에 돌리면 jobkorea 추천공고 꼬리(남의 공고)가 통째로 걸린다 —
+    근거와 실측은 `urgency_rule.py`의 '2-1. 상시·수시채용' 절."""
+    return bool(U.RX_ROLLING.search(seg if seg is not None else text)) \
+        or U.is_always_open(text)
+
+
 def parse_deadline(raw_text: str):
     """(마감일 | None, rolling 여부). 백필 값이 없을 때의 폴백."""
     t = raw_text or ''
+    always_open = U.is_always_open(t)
+
     hits = [x for x in (_date(*g) for g in RX_DEADLINE_LABEL.findall(t)) if x]
     if hits:
-        return max(hits), bool(U.RX_ROLLING.search(t))
+        # 라벨이 붙은 마감일은 강한 증거다. 상시채용 문구가 함께 있어도 날짜가 이긴다.
+        return max(hits), _rolling(t)
 
     # 접수기간 블록 안의 마지막 날짜 = 종료일. 시작일은 필요 없다.
-    m = U.RX_PERIOD_SEG.search(t)
-    if m:
-        seg = m.group(1)
-        ds = [x for x in (_date(*g) for g in RX_DATE_ANY.findall(seg)) if x]
-        if ds:
-            return max(ds), bool(U.RX_ROLLING.search(seg))
-    return None, bool(U.RX_ROLLING.search(t))
+    #
+    # ⚠️ 단, 상시채용이면 이 폴백을 타면 안 된다. `마감일 상시채용`인 공고의
+    # 접수기간 창에는 날짜가 **시작일 하나뿐**이라, max()가 그 시작일을 마감일로
+    # 돌려준다 -> 이미 지난 날짜 -> `closed`. 상시채용 공고가 마감된 것으로 뒤집힌다.
+    #
+    # 실제 데이터에서는 이게 우연히 가려져 있었다. jobkorea 본문에는 `접수기간`이
+    # 두 번 나오고 첫 매치인 탭 레이블(`상세요강 접수기간∙방법 기업정보`) 창에는
+    # 날짜가 없어서 폴백이 그냥 빠져나갔기 때문이다. 미끼가 사라지면(형식 변경,
+    # 2-2 앱이 조립한 짧은 헤더, 다른 소스) 조용히 틀린다.
+    if not always_open:
+        m = U.RX_PERIOD_SEG.search(t)
+        if m:
+            seg = m.group(1)
+            ds = [x for x in (_date(*g) for g in RX_DATE_ANY.findall(seg)) if x]
+            if ds:
+                return max(ds), _rolling(t, seg)
+    return None, _rolling(t)
 
 
 def status_of(deadline, rolling, as_of):

@@ -183,7 +183,7 @@ def _print(res, k):
 # ---------------------------------------------------------------------------
 # 내장 베이스라인 — 프록시 자체를 검증하고, 하한선을 재현 가능하게 만든다
 # ---------------------------------------------------------------------------
-def idf_baseline(pool, idf, include_extra=False):
+def idf_baseline(pool, idf, include_extra=False, normalize=False):
     """IDF 가중 스킬 매칭. 브리프가 '하한선'으로 적어둔 바로 그 방식.
 
     이걸 여기 둔 이유는 심지우의 `skill_matcher.py`를 대신하려는 게 아니라,
@@ -197,6 +197,17 @@ def idf_baseline(pool, idf, include_extra=False):
     else:
         jobs = list(zip(pool['job_id'], pool['techs']))
 
+    # 길이 정규화 `/√Σidf` — 공고가 요구하는 스킬 전체의 IDF 합으로 나눈다.
+    # 스킬을 많이 나열한 공고가 우연히 겹칠 확률이 높다는 편향을 눌러준다.
+    # 여기 두는 이유: HANDOFF가 이 방식의 수치(Recall@10 94.0%)를 **하한선으로
+    # 제시**하는데 그걸 재현하는 코드가 저장소에 없었다. 이 저장소가 같은 일로
+    # 두 번 데였다 — `reference_stats.json`(생성 스크립트 없음)과 브리프의 92.5%.
+    norm = {}
+    if normalize:
+        for jid, techs in jobs:
+            s = math.sqrt(sum(idf.get(t, 0.0) for t in sorted(techs)))
+            norm[jid] = s if s > 0 else 1.0
+
     def recommend(resume_text, top_k=10, filters=None):
         mine = extract_techs(resume_text)
         if include_extra:
@@ -208,7 +219,27 @@ def idf_baseline(pool, idf, include_extra=False):
         for jid, techs in jobs:
             hit = mine & techs
             if hit:
-                scored.append((sum(idf.get(t, 0.0) for t in hit), jid, sorted(hit)))
+                # ⚠️ `for t in hit`로 더하면 **실행마다 점수가 달라진다.**
+                # `hit`는 집합이고 파이썬 문자열 해시는 프로세스마다 무작위화되므로
+                # (PEP 456) 순회 순서가 매번 바뀐다. 부동소수점 덧셈은 결합법칙을
+                # 만족하지 않아서, 같아야 할 두 점수가 마지막 비트에서 갈린다.
+                #
+                # 보통은 무시할 오차지만 여기서는 순위가 뒤집힌다 — 이 데이터는
+                # **동점이 지배 요인**이기 때문이다(질의당 동점 평균 94건,
+                # HANDOFF 2번 절). 그 결과 self-test가 재현되지 않았다:
+                #     같은 코드 3회 실행 -> Recall@10  65.0% / 65.5% / 66.0%
+                # 하한선으로 쓰라고 배포한 숫자가 ±1%p 흔들리면 "점수가 내려가면
+                # 뭔가 깨진 것"이라는 사용법이 성립하지 않는다.
+                #
+                # 정렬된 순서로 더하면 순서가 고정되고 결과가 재현된다.
+                h = sorted(hit)
+                sc = sum(idf.get(t, 0.0) for t in h)
+                if normalize:
+                    sc /= norm[jid]
+                scored.append((sc, jid, h))
+        # 안정 정렬이므로 동점은 pool 행 순서를 따른다. 동점 처리 정책 자체는
+        # 심지우가 고를 설계 결정이고(HANDOFF 2번), 여기서는 대조군이 흔들리지
+        # 않게 고정하는 것까지만 한다.
         scored.sort(key=lambda x: -x[0])
         return [(jid, sc, {'matched_techs': h, 'matched_count': len(h)})
                 for sc, jid, h in scored[:top_k]]
@@ -220,7 +251,7 @@ _EXTRA_VOCAB = set()
 
 
 def self_test(as_of='2026-06-20', n=DEFAULT_N, k=DEFAULT_K, seed=0,
-              include_extra=False):
+              include_extra=False, normalize=False):
     global _EXTRA_VOCAB
     corpus = job_pool.load_corpus()
     pool = job_pool.load_pool(as_of=as_of, corpus=corpus)
@@ -228,8 +259,9 @@ def self_test(as_of='2026-06-20', n=DEFAULT_N, k=DEFAULT_K, seed=0,
     if include_extra:
         _EXTRA_VOCAB = {x for s_ in pool['skills_extra'] for x in s_ if len(x) >= 2}
     print(f"  IDF 사전 {len(idf):,}종 · 기준일 {as_of}"
-          f"{' · 비사전 스킬 포함' if include_extra else ''}")
-    return evaluate(idf_baseline(pool, idf, include_extra), pool=pool,
+          f"{' · 비사전 스킬 포함' if include_extra else ''}"
+          f"{' · 길이 정규화 /√Σidf' if normalize else ''}")
+    return evaluate(idf_baseline(pool, idf, include_extra, normalize), pool=pool,
                     n=n, k=k, seed=seed)
 
 
@@ -242,5 +274,8 @@ if __name__ == '__main__':
     ap.add_argument('--k', type=int, default=DEFAULT_K)
     ap.add_argument('--include-extra', action='store_true',
                     help='비사전 스킬(엑셀·정보처리기사…)까지 매칭에 쓴다')
+    ap.add_argument('--norm', action='store_true',
+                    help='길이 정규화 /√Σidf 를 건다 (HANDOFF 표의 아랫줄)')
     a = ap.parse_args()
-    self_test(as_of=a.as_of, n=a.n, k=a.k, include_extra=a.include_extra)
+    self_test(as_of=a.as_of, n=a.n, k=a.k, include_extra=a.include_extra,
+              normalize=a.norm)
