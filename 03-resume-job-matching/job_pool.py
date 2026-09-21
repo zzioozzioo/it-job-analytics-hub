@@ -223,7 +223,21 @@ def _blank(v):
 
 
 def load_corpus(version: str = 'v4') -> pd.DataFrame:
-    """40,348건 전부. 어휘 통계(IDF·동시출현)용 — 메타데이터 결손과 무관하다."""
+    """40,348건 전부. 어휘 통계(IDF·동시출현)용 — 메타데이터 결손과 무관하다.
+
+    ⚠️ **02가 v5·v6으로 가도 여기는 따라 올리지 않는다. v4 고정은 의도다.**
+    03은 라벨(`urgency_score`)을 읽지 않는다 — `raw_text`와 스킬 필드만 쓰고,
+    그건 모든 라벨 버전에서 동일하다. 즉 여기서 버전이 정하는 것은 "어느 170MB
+    파일을 열 것인가"뿐이고, 어느 쪽을 열든 03의 결과는 같다.
+
+    바꾸면 얻는 것 없이 비용만 든다.
+      · 기술명 캐시 파일명이 버전에서 나온다(`techs_extracted_<version>.json`).
+        내용이 같은데도 캐시가 무효가 되어 `extract_techs()`를 40,348건에
+        다시 돌린다 — 약 10분.
+      · 이미 받아둔 v4 옆에 170MB를 한 벌 더 내려받는다.
+
+    (의미상으로는 'raw'가 가장 정확하다. 그것도 캐시를 한 번 무효화하므로
+     지금은 두었다 — 캐시를 어차피 버려야 할 일이 생기면 그때 'raw'로 옮긴다.)"""
     path = hf_data.fetch(hf_data.master(version))
     with open(path, encoding='utf-8') as f:
         rows = json.load(f)

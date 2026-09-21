@@ -35,12 +35,13 @@ def default_model_dir():
 
     ⚠️ 조용히 내려가지 않는다. 어느 버전을 실제로 로드했는지는
        `UrgencyModel().meta['rule_version']`에 남고 앱이 화면에 표시한다.
-       규칙은 v4인데 모델이 v3이면 둘의 불일치가 조금 커진다 —
-       규칙이 주 결과이므로 동작에는 문제가 없지만, 알고 봐야 한다."""
-    for name in ("models_v4", "models_v3"):
+       규칙은 v5인데 모델이 v4면 둘의 불일치가 조금 커진다 —
+       규칙이 주 결과이므로 동작에는 문제가 없지만, 알고 봐야 한다.
+       (v4와 v5는 라벨이 38행만 다르므로 이 경우 차이는 특히 작다)"""
+    for name in ("models_v5", "models_v4", "models_v3"):
         if (_MODELS / name / "urgency_model.joblib").exists():
             return _MODELS / name
-    return _MODELS / "models_v4"      # 없으면 여기 없다고 말하게 둔다
+    return _MODELS / "models_v5"      # 없으면 여기 없다고 말하게 둔다
 
 
 MODEL_DIR = default_model_dir()
@@ -57,13 +58,13 @@ class UrgencyModel:
         if not (model_dir / "urgency_model.joblib").exists():
             raise FileNotFoundError(
                 f"{model_dir} 에 모델이 없습니다. "
-                f"2-1에서 `python train_urgency.py --v4`를 먼저 실행하세요.")
+                f"2-1에서 `python train_urgency.py --v5`를 먼저 실행하세요.")
         self.model = joblib.load(model_dir / "urgency_model.joblib")
         self.vec = joblib.load(model_dir / "urgency_tfidf.joblib")
         self.meta = json.loads((model_dir / "model_meta.json").read_text(encoding='utf-8'))
         self.mode = self.meta.get('prediction', 'argmax')
         self._transform = make_transform(VARIANT)
-        # 정본(models_v4/)은 None = TF-IDF만. models_v4_struct/ 처럼 구조화
+        # 정본(models_v5/)은 None = TF-IDF만. models_v5_struct/ 처럼 구조화
         # 피처를 붙여 학습한 모델을 가리키면 이름 목록이 들어 있고, 추론에서도
         # 같은 순서로 다시 만들어 붙여야 한다. 없으면 차원이 어긋나 죽는다.
         self.struct_names = self.meta.get('struct_features') or None
@@ -93,7 +94,7 @@ class UrgencyModel:
                 f"{X.shape[1]:,}개가 만들어졌습니다.\n"
                 f"  model_meta.json의 struct_features = {self.struct_names}\n"
                 f"  구조화 피처를 쓴 모델(models_*_struct/)과 안 쓴 모델"
-                f"(models_v4/)이 섞였을 가능성이 큽니다. "
+                f"(models_v5/)이 섞였을 가능성이 큽니다. "
                 f"2-1에서 다시 학습해 저장하세요.")
 
     def predict(self, texts, sources):

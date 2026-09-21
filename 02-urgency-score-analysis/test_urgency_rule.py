@@ -168,6 +168,27 @@ def test_always_open_ignores_privacy_boilerplate():
     assert is_always_open(text) is False
 
 
+def test_always_open_scoring_path_uses_the_anchor():
+    """[수정 5] 채점 경로도 앵커를 쓴다 — v4까지 여기만 본문 전체를 봤다.
+
+    `is_always_open()`이 맞는 것과 **채점 분기가 그걸 쓰는 것**은 다른 문제다.
+    실제로 v4까지 함수는 있는데 채점은 여전히 `RX_ALWAYS_OPEN.search(body)`를
+    부르고 있었다(corpus 2,474행 발동 중 1,041행이 남의 공고·약관). 위쪽
+    is_always_open 테스트들이 전부 통과하는 상태에서도 이 버그가 살아 있었으므로
+    채점 경로를 따로 고정한다."""
+    tail = ("㈜우리회사 백엔드 개발자 모집 상세요강 접수기간∙방법 기업정보 추천공고 "
+            + "본문입니다 " * 40 +
+            "AI추천공고를 확인해 보세요! ㈜다른회사 프론트엔드 채용 "
+            "프론트엔드개발자 상시채용 즉시 지원")
+    real = ("㈜우리회사 백엔드 개발자 모집 지원자격 경력 경력 "
+            "접수기간 · 방법 마감일 상시채용 접수방법 잡코리아 즉시지원")
+
+    assert '상시' in score_posting(real, 'jobkorea')['urgency_reason'], \
+        "진짜 상시채용 공고는 계속 점수를 받아야 한다"
+    assert '상시' not in score_posting(tail, 'jobkorea')['urgency_reason'], \
+        "추천공고 꼬리(남의 공고)로 상시채용 점수가 붙으면 안 된다"
+
+
 def test_always_open_scans_every_anchor_not_just_the_first():
     """jobkorea 본문에는 `접수기간`이 두 번 나온다 — 탭 레이블이 먼저 걸린다.
 

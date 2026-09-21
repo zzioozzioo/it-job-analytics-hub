@@ -38,17 +38,19 @@ data/
 #
 # ⚠️ **배포 중인 모델 하나만** 바이너리를 커밋한다. data/ 가 빠져 있어서
 #    클론한 사람은 재학습을 할 수 없고, 모델이 없으면 앱이 규칙 전용으로만
-#    돈다. 4.8MB다. 지금 그 자리는 models_v4/ 다.
-#    (v5를 배포하면 models_v4/*.joblib 를 여기 추가하고 v5 줄을 지울 것)
+#    돈다. 5.3MB다. 지금 그 자리는 models_v5/ 다.
+#    (v6을 배포하면 models_v5/*.joblib 를 여기 추가할 것)
 02-urgency-score-analysis/2-1-urgency-prediction-model/models/*.joblib
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_baseline/*.joblib
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_transfer/*.joblib
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_v3/*.joblib
+02-urgency-score-analysis/2-1-urgency-prediction-model/models_v4/*.joblib
 
 # 구조화 피처 실험(`train_urgency.py --struct`) 산출물.
 # 라벨 누출이 있는 모델이라 배포하면 안 된다. meta만 남겨 실험 기록으로 쓴다.
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_v3_struct/*.joblib
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_v4_struct/*.joblib
+02-urgency-score-analysis/2-1-urgency-prediction-model/models_v5_struct/*.joblib
 
 # unmeasurable 공고에 대한 모델 예측 덤프 (955KB, 파생물)
 02-urgency-score-analysis/2-1-urgency-prediction-model/models_transfer/unmeasurable_predictions.json

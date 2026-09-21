@@ -157,11 +157,11 @@ r.encoding = r.encoding or r.apparent_encoding   # (현)
 ```
 
 의존 모듈 (상위 디렉터리 공유):
-- [`../urgency_rule.py`](../urgency_rule.py) — 라벨 규칙 v4
+- [`../urgency_rule.py`](../urgency_rule.py) — 라벨 규칙 v5
 - [`../urgency_model.py`](../urgency_model.py) — 모델 추론 인터페이스
-  (`models_v4/` 우선, 없으면 `models_v3/`)
+  (`models_v5/` 우선, 없으면 `models_v4/` → `models_v3/`)
 
-모델(`../2-1-urgency-prediction-model/models_v4/`)이 없어도 앱은 동작한다.
+모델(`../2-1-urgency-prediction-model/models_v5/`)이 없어도 앱은 동작한다.
 규칙만으로 채점하고 모델 칸에 사유를 표시한다.
 
 규칙과 모델의 라벨 버전이 어긋나면(`RULE_VERSION` vs `MODEL.meta['rule_version']`)
@@ -174,7 +174,7 @@ r.encoding = r.encoding or r.apparent_encoding   # (현)
 > ⚠️ 그래서 **라벨을 다시 만들면 `python build_reference_stats.py --write`도
 > 반드시 함께 돌린다.** 손으로 고치지 말 것. 전에 이 파일만 생성 스크립트 없이
 > 놓여 있어서, 라벨이 v4가 된 뒤에도 v3 분포인 채 남아 앱이 조용히 틀린
-> 백분위를 보여줬다.
+> 백분위를 보여줬다. v5 라운드에서도 이 파일을 함께 갱신했다.
 
 ---
 

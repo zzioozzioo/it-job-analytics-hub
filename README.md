@@ -110,8 +110,8 @@
 > 관측되는 것(접수 창 길이 · 모집 규모 · 즉시 입사 요구 · 결원 대체 · 마감 압박 ·
 > 보상 유인)만 묶어 개념을 다시 정의했습니다. 폴더명 `urgency`는 그때 흔적입니다.
 
-라벨 규칙은 현재 **v4**이고, 규칙·모델·앱이 [`urgency_rule.py`](02-urgency-score-analysis/urgency_rule.py)
-하나를 공유합니다. 규칙이 무엇을 세 번 고쳤고 무엇을 못 고쳤는지는
+라벨 규칙은 현재 **v5**이고, 규칙·모델·앱이 [`urgency_rule.py`](02-urgency-score-analysis/urgency_rule.py)
+하나를 공유합니다. 규칙이 무엇을 다섯 번 고쳤고 무엇을 못 고쳤는지는
 [02 README](02-urgency-score-analysis/README.md)에 있습니다.
 
 ### 2-1. 채용 적극성 예측 모델
@@ -228,11 +228,11 @@ it-job-analytics-hub/
 │   ├── app.py
 │   └── requirements.txt
 ├── 02-urgency-score-analysis/
-│   ├── urgency_rule.py                  # 라벨 규칙 v4 — 규칙의 단일 출처
+│   ├── urgency_rule.py                  # 라벨 규칙 v5 — 규칙의 단일 출처
 │   ├── test_urgency_rule.py             # 규칙 회귀 테스트 (pytest 불필요)
-│   ├── urgency_model.py                 # 모델 추론 인터페이스 (models_v4/)
+│   ├── urgency_model.py                 # 모델 추론 인터페이스 (models_v5/)
 │   ├── 2-1-urgency-prediction-model/    # 학습 · 검증 스크립트, 모델, 실행 로그
-│   │   ├── train_urgency.py             #   현행 학습 (--v4 로 라운드 선택)
+│   │   ├── train_urgency.py             #   현행 학습 (--v4/--v5 로 라운드 선택)
 │   │   ├── compare_labels.py            #   상수 베이스라인 대비 라벨 비교
 │   │   └── calibrate_fallback.py        #   어휘 폴백 재보정 근거
 │   └── 2-2-urgency-app/
@@ -299,14 +299,16 @@ streamlit run app.py
 
 데이터셋은 `data/`에 없으면 **`data/` 안으로 자동 다운로드**됩니다
 (`common/hf_data.py`). 별도 캐시를 쓰지 않으므로 같은 파일이 두 벌 쌓이지
-않습니다. 라벨 파일 `master_merged_v4.json`은 규칙(`urgency_rule.py --write`)의
-산출물이지만 허깅페이스에도 올려두었으므로, 아래 재생성 없이도 받아집니다.
+않습니다. 라벨 파일은 규칙(`urgency_rule.py --write`)의 산출물인데, `_v2`~`_v5`가
+전부 허깅페이스에도 올라가 있어 재생성 없이 받아집니다. 아래는 규칙을 고쳤을 때의
+전체 절차입니다.
 
 ```bash
-# 라벨 재생성 -> 규칙 회귀 테스트 -> 재학습
+# 라벨 재생성 -> 규칙 회귀 테스트 -> 앱 분포 파일 -> 재학습
 python 02-urgency-score-analysis/urgency_rule.py --write
 python 02-urgency-score-analysis/test_urgency_rule.py
-cd 02-urgency-score-analysis/2-1-urgency-prediction-model && python train_urgency.py --v4
+cd 02-urgency-score-analysis/2-2-urgency-app && python build_reference_stats.py --write
+cd ../2-1-urgency-prediction-model && python train_urgency.py --v5
 ```
 
 절차와 근거는

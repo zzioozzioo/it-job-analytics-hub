@@ -60,21 +60,25 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 MASTER = "master_merged.json"          # 원본 40,348건
 MASTER_V2 = "master_merged_v2.json"    # 라벨 규칙 v2 (rescore_urgency.py)
 MASTER_V3 = "master_merged_v3.json"    # 라벨 규칙 v3
-MASTER_V4 = "master_merged_v4.json"    # 라벨 규칙 v4 — 현재 정본
+MASTER_V4 = "master_merged_v4.json"    # 라벨 규칙 v4 (비교 기준으로 보존)
+MASTER_V5 = "master_merged_v5.json"    # 라벨 규칙 v5 — 현재 정본
+#                                      # 2026-09-21에 HF 업로드 완료.
 
-#: 라벨 버전 -> 파일명. `master('v4')` 처럼 쓴다.
-MASTER_BY_VERSION = {'raw': MASTER, 'v2': MASTER_V2, 'v3': MASTER_V3, 'v4': MASTER_V4}
+#: 라벨 버전 -> 파일명. `master('v5')` 처럼 쓴다.
+MASTER_BY_VERSION = {'raw': MASTER, 'v2': MASTER_V2, 'v3': MASTER_V3,
+                     'v4': MASTER_V4, 'v5': MASTER_V5}
 
 # 내려받을 수 없을 때 안내할 "만드는 법". 가용성 목록이 아니다(상단 주석 참조).
 GENERATED_BY = {
     MASTER: "python build_master_dataset.py            (원본 병합)",
     MASTER_V2: "python rescore_urgency.py --write        (규칙 v2)",
     MASTER_V3: "python 02-urgency-score-analysis/urgency_rule.py --write   (당시 규칙 v3)",
-    MASTER_V4: "python 02-urgency-score-analysis/urgency_rule.py --write   (규칙 v4, 현재)",
+    MASTER_V4: "python 02-urgency-score-analysis/urgency_rule.py --write   (당시 규칙 v4)",
+    MASTER_V5: "python 02-urgency-score-analysis/urgency_rule.py --write   (규칙 v5, 현재)",
 }
 
 
-def master(version: str = 'v4') -> str:
+def master(version: str = 'v5') -> str:
     """라벨 버전 태그로 파일명을 얻는다. 'raw' 는 라벨 이전의 원본."""
     try:
         return MASTER_BY_VERSION[version]
