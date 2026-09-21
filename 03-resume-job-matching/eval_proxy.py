@@ -52,7 +52,9 @@ eval_proxy.py — 정답 라벨 없이 추천기를 채점한다.
     from eval_proxy import evaluate
     evaluate(recommend)                 # -> {'recall@10': .., 'mrr': .., ...}
 
-    python eval_proxy.py --self-test    # 내장 IDF 베이스라인으로 하한선 재현
+    python eval_proxy.py --self-test           # 내장 IDF 베이스라인으로 하한선 재현
+    python eval_proxy.py --self-test --norm    # 길이 정규화 /√Σidf 를 건 하한선
+    python eval_proxy.py --compare-norms       # 정규화 후보 6종을 한 번에 비교
 """
 import argparse
 import math
@@ -72,6 +74,22 @@ DEFAULT_K = 10
 DEFAULT_RATIOS = (1.0, 0.6, 0.4)
 HEADLINE_RATIO = 0.4     # 브리프가 하한선으로 적어둔 조건(가장 어려운 것)
 MIN_TECHS = 3            # 이보다 스킬이 적으면 60%/40% 조건이 의미가 없다
+
+# 정규화 후보. HANDOFF 2번 절이 "어떤 정규화를 쓸지 프록시로 비교해 고르라"고
+# 적어둔 항목들이다. 동점이 이 데이터의 지배 요인이므로(질의당 평균 94건)
+# 정규화 선택이 곧 순위 결정이다 — 실제로 sqrt 하나로 65.0% -> 92.5%가 됐다.
+#
+#   none      Σ idf(일치)                      가중치만, 정규화 없음
+#   sqrt      Σ idf(일치) / √Σ idf(공고)        현행 하한선
+#   linear    Σ idf(일치) / Σ idf(공고)         정규화를 끝까지 민 것
+#   count     Σ idf(일치) / 공고 스킬 개수      HANDOFF가 예로 든 "스킬 수로 나누기"
+#   cosine    Σ idf²(일치) / (‖공고‖·‖이력서‖)  idf 가중 벡터의 코사인
+#   jaccard   Σ idf(일치) / Σ idf(합집합)       idf 가중 자카드
+#
+# ⚠️ cosine 의 분자가 idf² 인 것이 핵심이다. 분자를 Σidf 로 두면 이력서 쪽
+#    노름이 한 질의 안에서 상수라 **sqrt 와 순위가 완전히 같아진다** — 다른
+#    방식을 넣었다고 생각하면서 같은 것을 재게 된다.
+NORM_SCHEMES = ('none', 'sqrt', 'linear', 'count', 'cosine', 'jaccard')
 
 
 # ---------------------------------------------------------------------------
@@ -183,30 +201,74 @@ def _print(res, k):
 # ---------------------------------------------------------------------------
 # 내장 베이스라인 — 프록시 자체를 검증하고, 하한선을 재현 가능하게 만든다
 # ---------------------------------------------------------------------------
-def idf_baseline(pool, idf, include_extra=False, normalize=False):
+def idf_baseline(pool, idf, include_extra=False, norm='none'):
     """IDF 가중 스킬 매칭. 브리프가 '하한선'으로 적어둔 바로 그 방식.
 
     이걸 여기 둔 이유는 심지우의 `skill_matcher.py`를 대신하려는 게 아니라,
     **프록시가 제대로 동작하는지 확인할 대조군**이 필요해서다. 브리프에 적힌
     Recall@10 92.5% / MRR 0.790 을 재현하는 스크립트가 저장소에 없었다.
     (`reference_stats.json`이 생성 스크립트 없이 놓여 있던 것과 같은 문제다)
+
+    norm  정규화 방식(NORM_SCHEMES). 이전 인터페이스의 `normalize=True/False`도
+          그대로 받는다(각각 'sqrt'/'none') — HANDOFF로 배포한 `--norm` 사용법을
+          깨지 않기 위해서다.
     """
+    if norm is True:
+        norm = 'sqrt'
+    elif not norm:
+        norm = 'none'
+    if norm not in NORM_SCHEMES:
+        raise ValueError("모르는 정규화 방식: %r (가능: %s)"
+                         % (norm, ', '.join(NORM_SCHEMES)))
+
     if include_extra:
         jobs = list(zip(pool['job_id'],
                         [a | b for a, b in zip(pool['techs'], pool['skills_extra'])]))
     else:
         jobs = list(zip(pool['job_id'], pool['techs']))
 
-    # 길이 정규화 `/√Σidf` — 공고가 요구하는 스킬 전체의 IDF 합으로 나눈다.
-    # 스킬을 많이 나열한 공고가 우연히 겹칠 확률이 높다는 편향을 눌러준다.
+    # 길이 정규화 — 공고가 요구하는 스킬 전체의 IDF 합으로 나눈다. 스킬을 많이
+    # 나열한 공고가 우연히 겹칠 확률이 높다는 편향을 눌러준다.
     # 여기 두는 이유: HANDOFF가 이 방식의 수치(Recall@10 94.0%)를 **하한선으로
     # 제시**하는데 그걸 재현하는 코드가 저장소에 없었다. 이 저장소가 같은 일로
     # 두 번 데였다 — `reference_stats.json`(생성 스크립트 없음)과 브리프의 92.5%.
-    norm = {}
-    if normalize:
-        for jid, techs in jobs:
-            s = math.sqrt(sum(idf.get(t, 0.0) for t in sorted(techs)))
-            norm[jid] = s if s > 0 else 1.0
+    #
+    # 공고 쪽 분모는 질의와 무관하므로 미리 계산한다. `sorted(techs)`로 더하는
+    # 이유는 아래 recommend 안의 ⚠️ 주석과 같다(순회 순서 고정).
+    den = {}          # sqrt · linear · count 가 쓰는 공고별 분모
+    job_sum = {}      # Σ idf(공고)   — jaccard 분모
+    job_l2 = {}       # √Σ idf²(공고) — cosine 분모
+    for jid, techs in jobs:
+        ts = sorted(techs)
+        s = sum(idf.get(t, 0.0) for t in ts)
+        job_sum[jid] = s
+        if norm == 'cosine':
+            l2 = math.sqrt(sum(idf.get(t, 0.0) ** 2 for t in ts))
+            job_l2[jid] = l2 if l2 > 0 else 1.0
+        elif norm == 'sqrt':
+            den[jid] = math.sqrt(s) if s > 0 else 1.0
+        elif norm == 'linear':
+            den[jid] = s if s > 0 else 1.0
+        elif norm == 'count':
+            den[jid] = len(ts) or 1
+
+    def _scorer(mine):
+        """질의마다 한 번 만든다 — cosine·jaccard 는 분모가 이력서에도 의존한다."""
+        if norm == 'cosine':
+            r = math.sqrt(sum(idf.get(t, 0.0) ** 2 for t in sorted(mine))) or 1.0
+            return lambda jid, h: (sum(idf.get(t, 0.0) ** 2 for t in h)
+                                   / (job_l2[jid] * r))
+        if norm == 'jaccard':
+            r = sum(idf.get(t, 0.0) for t in sorted(mine))
+
+            def f(jid, h):
+                hs = sum(idf.get(t, 0.0) for t in h)
+                u = job_sum[jid] + r - hs      # |A∪B| = |A| + |B| − |A∩B|
+                return hs / u if u > 0 else 0.0
+            return f
+        if norm == 'none':
+            return lambda jid, h: sum(idf.get(t, 0.0) for t in h)
+        return lambda jid, h: sum(idf.get(t, 0.0) for t in h) / den[jid]
 
     def recommend(resume_text, top_k=10, filters=None):
         mine = extract_techs(resume_text)
@@ -215,6 +277,7 @@ def idf_baseline(pool, idf, include_extra=False, normalize=False):
             mine = mine | {x for x in _EXTRA_VOCAB if x in low}
         if not mine:
             return []
+        sc_of = _scorer(mine)
         scored = []
         for jid, techs in jobs:
             hit = mine & techs
@@ -233,10 +296,7 @@ def idf_baseline(pool, idf, include_extra=False, normalize=False):
                 #
                 # 정렬된 순서로 더하면 순서가 고정되고 결과가 재현된다.
                 h = sorted(hit)
-                sc = sum(idf.get(t, 0.0) for t in h)
-                if normalize:
-                    sc /= norm[jid]
-                scored.append((sc, jid, h))
+                scored.append((sc_of(jid, h), jid, h))
         # 안정 정렬이므로 동점은 pool 행 순서를 따른다. 동점 처리 정책 자체는
         # 심지우가 고를 설계 결정이고(HANDOFF 2번), 여기서는 대조군이 흔들리지
         # 않게 고정하는 것까지만 한다.
@@ -250,19 +310,59 @@ def idf_baseline(pool, idf, include_extra=False, normalize=False):
 _EXTRA_VOCAB = set()
 
 
-def self_test(as_of='2026-06-20', n=DEFAULT_N, k=DEFAULT_K, seed=0,
-              include_extra=False, normalize=False):
+def _load(as_of, include_extra):
+    """corpus·pool·idf 를 한 번만 읽는다 — compare_norms 가 6번 다시 읽지 않도록."""
     global _EXTRA_VOCAB
     corpus = job_pool.load_corpus()
     pool = job_pool.load_pool(as_of=as_of, corpus=corpus)
     idf = job_pool.build_idf(corpus, include_extra=include_extra)
     if include_extra:
         _EXTRA_VOCAB = {x for s_ in pool['skills_extra'] for x in s_ if len(x) >= 2}
+    return pool, idf
+
+
+def self_test(as_of='2026-06-20', n=DEFAULT_N, k=DEFAULT_K, seed=0,
+              include_extra=False, norm='none'):
+    pool, idf = _load(as_of, include_extra)
     print(f"  IDF 사전 {len(idf):,}종 · 기준일 {as_of}"
           f"{' · 비사전 스킬 포함' if include_extra else ''}"
-          f"{' · 길이 정규화 /√Σidf' if normalize else ''}")
-    return evaluate(idf_baseline(pool, idf, include_extra, normalize), pool=pool,
+          f" · 정규화 {'sqrt' if norm is True else (norm or 'none')}")
+    return evaluate(idf_baseline(pool, idf, include_extra, norm), pool=pool,
                     n=n, k=k, seed=seed)
+
+
+def compare_norms(as_of='2026-06-20', n=DEFAULT_N, k=DEFAULT_K, seed=0,
+                  include_extra=False, schemes=NORM_SCHEMES,
+                  ratios=DEFAULT_RATIOS):
+    """정규화 후보를 같은 조건에서 나란히 잰다 — HANDOFF 2번 절이 요청한 비교.
+
+    pool·idf·seed 가 같으므로 **질의 집합이 방식마다 동일**하다. 그래야 차이를
+    표본 차이가 아니라 방식의 차이로 읽을 수 있다. 이 데이터는 동점이 지배
+    요인이라(질의당 평균 94건) 정규화 선택이 곧 순위 결정이다.
+    """
+    pool, idf = _load(as_of, include_extra)
+    print(f"\n  후보 풀 {len(pool):,}건 · 질의 {n}건 · IDF 사전 {len(idf):,}종 "
+          f"· 기준일 {as_of}"
+          f"{' · 비사전 스킬 포함' if include_extra else ''}")
+
+    rows = {}
+    for s in schemes:
+        print(f"    측정 중: {s} ...", flush=True)
+        rows[s] = evaluate(idf_baseline(pool, idf, include_extra, s), pool=pool,
+                           n=n, k=k, seed=seed, ratios=ratios, verbose=False)
+
+    head = ''.join(f"{r:.0%}".rjust(9) for r in ratios)
+    print(f"\n    {'정규화':10}{'Recall@%d' % k:>27}{'MRR':>27}")
+    print(f"    {'':10}{head}{'':>3}{head}")
+    print('    ' + '-' * 62)
+    for s in schemes:
+        rec = ''.join(f"{rows[s]['by_ratio'][r][f'recall@{k}']:>8.1%} " for r in ratios)
+        mrr = ''.join(f"{rows[s]['by_ratio'][r]['mrr']:>8.3f} " for r in ratios)
+        print(f"    {s:10}{rec}{'':>1}{mrr}")
+    rnd = rows[schemes[0]]['random']
+    print(f"    {'(무작위)':10}{rnd[f'recall@{k}']:>8.2%}{'':>19}{rnd['mrr']:>8.3f}")
+    print(f"\n  ⚠️ {rows[schemes[0]]['caveat']}\n")
+    return rows
 
 
 if __name__ == '__main__':
@@ -274,8 +374,17 @@ if __name__ == '__main__':
     ap.add_argument('--k', type=int, default=DEFAULT_K)
     ap.add_argument('--include-extra', action='store_true',
                     help='비사전 스킬(엑셀·정보처리기사…)까지 매칭에 쓴다')
-    ap.add_argument('--norm', action='store_true',
-                    help='길이 정규화 /√Σidf 를 건다 (HANDOFF 표의 아랫줄)')
+    ap.add_argument('--norm', nargs='?', const='sqrt', default='none',
+                    choices=NORM_SCHEMES,
+                    help='정규화 방식. 값 없이 --norm 이면 sqrt(/√Σidf, '
+                         'HANDOFF 표의 아랫줄)')
+    ap.add_argument('--compare-norms', action='store_true',
+                    help='정규화 후보 %s 을 같은 질의로 비교한다'
+                         % '·'.join(NORM_SCHEMES))
     a = ap.parse_args()
-    self_test(as_of=a.as_of, n=a.n, k=a.k, include_extra=a.include_extra,
-              normalize=a.norm)
+    if a.compare_norms:
+        compare_norms(as_of=a.as_of, n=a.n, k=a.k,
+                      include_extra=a.include_extra)
+    else:
+        self_test(as_of=a.as_of, n=a.n, k=a.k, include_extra=a.include_extra,
+                  norm=a.norm)
