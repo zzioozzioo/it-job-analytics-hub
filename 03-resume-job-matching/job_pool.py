@@ -219,7 +219,32 @@ def _as_list(cell):
 
 
 def _blank(v):
-    return v is None or (isinstance(v, str) and v.strip() in ('', 'None', 'nan'))
+    """pandas 결측값을 포함해 "비어있다"를 판정한다.
+
+    ⚠️ **float NaN 검사를 뺄면 조용히 틀린다.** pandas 는 문자열 컬럼의
+    결측을 `None` 으로 둠 때도 있고 `NaN` 으로 통일할 때도 있는데
+    (버전·dtype·연산 경로에 따라 다르다), **`NaN` 은 truthy 라**
+    `row.get('title') or 백필값` 같은 폴백이 잡히지 않고 그대로 통과한다.
+
+        >>> float('nan') or '대체'
+        nan                      # '대체' 가 아니다
+
+    그러면 사람인 백필이 100% 실패하고도 예외 하나 안 난 채 풀이 39,668
+    → 14,398 로 줄어든다(심지우 신고, pandas 3.0.5 환경). 여기서 막는다.
+    """
+    if v is None:
+        return True
+    if isinstance(v, float) and v != v:          # NaN 은 자기 자신과 같지 않다
+        return True
+    return isinstance(v, str) and v.strip() in ('', 'None', 'nan')
+
+
+def _val(v):
+    """pandas 결측(None·NaN·빈문자열)을 전부 None 으로 정규화한다.
+
+    `값 or 대체값` 패턴을 쓰기 전에 반드시 이걸 거친다. pandas 가 결측을
+    어떤 모양으로 돌려주든 이 함수 뒤에서는 None 하나다."""
+    return None if _blank(v) else v
 
 
 def load_corpus(version: str = 'v4') -> pd.DataFrame:
@@ -242,9 +267,14 @@ def load_corpus(version: str = 'v4') -> pd.DataFrame:
     with open(path, encoding='utf-8') as f:
         rows = json.load(f)
     df = pd.DataFrame(rows)
+    # 결측 표현을 None 으로 통일한다. `.astype(object)` 를 붙이는 이유는
+    # pandas 가 문자열 컬럼의 None 을 다시 NaN 으로 승격시키는 경로가 있기
+    # 때문이다. 다만 여기에 전부 기대지 않고 소비 지점(load_pool)에서도
+    # `_val()` 로 한 번 더 막는다 — 이 계층의 버그는 예외가 아니라 조용한
+    # 건수 감소로 나타나서 눈치채기 어렵다.
     for c in META_FIELDS:
         if c in df.columns:
-            df[c] = df[c].map(lambda v: None if _blank(v) else v)
+            df[c] = df[c].map(lambda v: None if _blank(v) else v).astype(object)
     return df
 
 
@@ -258,6 +288,39 @@ def load_backfill() -> dict:
     with open(BACKFILL, encoding='utf-8') as f:
         raw = json.load(f)
     return {k: v for k, v in raw.items() if v.get('status') == 'ok'}
+
+
+_warned = set()
+
+
+def _warn(key: str, msg: str):
+    """같은 경고를 프로세스당 한 번만 낸다(load_pool 이 여러 번 불린다)."""
+    if key in _warned:
+        return
+    _warned.add(key)
+    print(msg, file=sys.stderr)
+
+
+def _warn_no_backfill():
+    _warn('no_backfill', f"""
+⚠️  사람인 백필 파일이 없어 추천 풀에서 saramin 25,270건이 통째로 빠집니다.
+    없는 파일: {BACKFILL}
+    영향: 풀 39,668건 -> 14,398건 (jobkorea+wanted 만). 매칭 가능 후보로는
+          27,759 -> 14,167건. 경력 하드필터도 사람인에 못 겁니다.
+    이 파일은 git 제외 대상이라 clone 으로 따라오지 않습니다 — 팀에서 받아
+    data/ 에 놓거나, backfill_saramin.py 로 다시 만드세요(약 5.6시간).
+    이 상태로 낸 점수는 39,668건 기준 수치와 비교할 수 없습니다.
+""".rstrip())
+
+
+def _warn_backfill_no_effect(n_bf: int):
+    _warn('backfill_no_effect', f"""
+⚠️  백필 파일은 읽혔는데({n_bf:,}건) 실제로 병합된 공고가 0건입니다.
+    예외가 안 났다고 정상이 아닙니다 — 풀이 조용히 14,398건으로 줄어듭니다.
+    알려진 원인: pandas 가 메타 컬럼의 결측을 NaN 으로 돌려주면 `값 or 백필값`
+    폴백이 NaN(truthy)에서 멈춥니다. _blank()/_val() 이 그걸 막고 있으니,
+    이 경고가 보인다면 그 방어가 닿지 않는 새 경로가 생긴 것입니다.
+""".rstrip())
 
 
 def _techs_cache_path(version: str) -> Path:
@@ -390,17 +453,25 @@ def load_pool(as_of=None,
 
     df = corpus if corpus is not None else load_corpus(version)
     bf = load_backfill() if use_backfill else {}
+    if use_backfill and not bf:
+        _warn_no_backfill()
     techs = techs_series(df, version, use_text_extraction)
 
+    merged = 0          # 백필이 실제로 메타를 채운 건수 — 아래 조용한 실패 감지용
     recs = []
     for i, row in enumerate(df.to_dict('records')):
         jid, src = str(row.get('job_id')), row.get('source')
         b = bf.get(jid) if src == 'saramin' else None
 
-        title = row.get('title') or (b or {}).get('title')
-        company = row.get('company') or (b or {}).get('company')
-        location = row.get('location') or (b or {}).get('location')
-        exp = row.get('experience_level') or (b or {}).get('experience_level')
+        # `_val()` 을 빼면 pandas 결측이 NaN 일 때 폴백이 안 먹는다(_blank 참조).
+        title = _val(row.get('title')) or _val((b or {}).get('title'))
+        company = _val(row.get('company')) or _val((b or {}).get('company'))
+        location = _val(row.get('location')) or _val((b or {}).get('location'))
+        exp = (_val(row.get('experience_level'))
+               or _val((b or {}).get('experience_level')))
+        if b is not None and (row.get('title') is not title
+                              or row.get('company') is not company):
+            merged += 1
 
         deadline, rolling = None, False
         if b and b.get('deadline'):
@@ -418,6 +489,9 @@ def load_pool(as_of=None,
             'status': status_of(deadline, rolling, as_of),
             'raw_text': row.get('raw_text'),
         })
+
+    if bf and merged == 0:
+        _warn_backfill_no_effect(len(bf))
 
     pool = pd.DataFrame(recs)
     if sources:
