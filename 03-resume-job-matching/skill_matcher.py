@@ -4,16 +4,26 @@ skill_matcher.py — 이력서 텍스트를 받아 공고를 추천한다.
 담당: 심지우 · 참고 문서: TASK-skill-matching.md, HANDOFF-skill-matching.md
 
 ---------------------------------------------------------------------------
-지금 이 파일의 상태 — 4단계(동점 처리·정규화) 완료
+지금 이 파일의 상태 — 5단계(설계 결정 4개 플래그) 완료
 ---------------------------------------------------------------------------
     STEP 3  IDF 가중 합산                                          [완료]
     STEP 4  동점 처리·정규화 — 5개 후보 구현, 기본값은 length_norm    [완료]
-    STEP 5  설계 결정 4개 플래그의 실제 분기 로직 (지금은 값만 받고 안 씀) [TODO]
+    STEP 5  설계 결정 4개 플래그의 실제 분기 로직                     [완료]
 
-STEP 4에서 만든 것: raw_idf(대조군) · length_norm(HANDOFF 검증 승자) ·
-jaccard · cosine · per_skill_count. `score_mode`로 고르고, 어느 게 나은지는
-`compare_score_modes()`로 eval_proxy를 돌려 표로 확인한다 — 코드가 대신
-고르지 않는다("플래그로 두고 프록시로 고른다"는 이 저장소의 방식 그대로).
+STEP 5에서 채운 것 — 전부 기본값 False, 끄고 켤 수만 있게. 최종 채택 여부는
+eval_proxy로 김민석이 비교(브리프 "플래그로 두고 프록시로 고른다"):
+    hypernym_match        Spring Boot -> Spring 등 상위 개념 함의
+                          (팀이 확정한 한 쌍만 HYPERNYM_MAP에 시드로 넣음)
+    implicit_related      01/app.py:503 compute_related_techs를 그대로 이식,
+                          코퍼스 전체 동시출현으로 "암묵적으로 같이 요구되는"
+                          기술을 확장
+    empty_resume_fallback 스킬 0개 이력서 폴백. ⚠️ 이 항목은 아직 팀 결정이
+                          안 났다(회의 안건 3, 두 번째 항목 미정) — 판단 자료를
+                          만들기 위해 최소한의 단어-겹침 버전만 구현했다.
+                          진짜 텍스트 유사도는 4단계 임베딩 몫.
+    use_skills_extra      비사전 스킬(엑셀 등)도 매칭 키에 포함할지.
+                          김민석 실측 65.7% vs 68.7% — 이미 더 나쁘다고 나옴,
+                          기본 False 권장.
 
 이 파일 자체는 마지막에 지워질 코드가 아니라 계속 커지는 파일이다 — 뼈대 단계라고
 부실하게 짜면 위 단계에서 계속 다시 손대게 되니, "함수 하나만 비어있는" 게 아니라
@@ -40,7 +50,9 @@ recommend()는 요청(질의)마다 호출된다. 매 호출마다 40,348건을 
 """
 
 import math
+import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -59,15 +71,150 @@ import job_pool                                    # noqa: E402  데이터 단�
 # 최종 비교는 eval_proxy로 김민석이 돌린다 — 여기서는 끄고 켤 수 있게만 만든다.
 DEFAULT_FLAGS = {
     # 상위 개념 함의: 이력서 Spring Boot -> Spring 요구 공고도 일치로 볼지
-    "hypernym_match": False,          # TODO STEP 5: True일 때 분기 구현
+    "hypernym_match": False,
     # 스킬 0개 이력서: 빈 결과 vs 텍스트 유사도 폴백
-    "empty_resume_fallback": False,   # TODO STEP 5: True일 때 폴백 경로 구현
+    # TODO: 이력서에 기술 스택이 0개인 경우 - 추천 X vs 비슷한 무언가라도 보여줌
+    "empty_resume_fallback": False,
     # compute_related_techs 식 암묵 확장: Django만 있어도 Python 추가할지
-    "implicit_related": False,        # TODO STEP 5: True일 때 01/app.py:503 로직 연결
+    "implicit_related": False,
     # 비사전 스킬(엑셀·정보처리기사 등)을 매칭 키에 포함할지
     # 참고: 김민석 실측 65.7% vs 68.7%로 오히려 더 나빴음 — 기본 False 유지
     "use_skills_extra": False,
 }
+
+
+# ---------------------------------------------------------------------------
+# STEP 5-1 — 상위 개념 함의 (hypernym_match)
+# ---------------------------------------------------------------------------
+# 팀 결정: 이력서에 "Spring Boot"가 있으면 "Spring"을 요구하는 공고도 일치로
+# 본다 (README: 데이터셋에 Spring 2,505건 · Spring Boot 126건이 따로 존재).
+#
+# ⚠️ 이 표는 팀이 확정한 한 쌍만 시드로 들어있다. 더 추가하려면 실제 158종
+#    캐논 목록(예: 실행 중 idf.keys() 출력)을 보고 팀이 판단해야 한다 —
+#    "React Native -> React"처럼 그럴듯해 보여도 이 저장소의 캐논 사전이
+#    실제로 그 두 이름을 어떻게 표준화하는지 확인 없이는 추측해서 넣지 않는다.
+HYPERNYM_MAP = {
+    "Spring Boot": "Spring",
+}
+
+
+def _expand_hypernyms(techs: set) -> set:
+    expanded = set(techs)
+    for specific, general in HYPERNYM_MAP.items():
+        if specific in techs:
+            expanded.add(general)
+    return expanded
+
+
+# ---------------------------------------------------------------------------
+# STEP 5-2 — compute_related_techs 식 암묵 확장 (implicit_related)
+# ---------------------------------------------------------------------------
+# 01-tech-stack-wordcloud/app.py:503의 compute_related_techs()를 그대로
+# 옮겨왔다 — 새 지표를 만들지 않고 검증된 걸 재사용한다.
+IMPLICIT_MIN_RATIO = 0.5   # base_tech 포함 공고 중 related_tech도 있는 비율
+IMPLICIT_TOP_K = 2         # 기술 하나당 최대 몇 개까지 확장할지
+
+
+def compute_related_techs(jobs, base_tech, universe):
+    """base_tech가 포함된 공고를 훑어 함께 등장한 기술의 빈도를 센다.
+    universe(상위 기술 집합) 안의 기술만 집계해 꼬리 노이즈를 걷어낸다.
+    (01-tech-stack-wordcloud/app.py:503 원본 그대로)"""
+    related = Counter()
+    match_count = 0
+    for techs in jobs:
+        if base_tech in techs:
+            match_count += 1
+            for t in techs:
+                if t != base_tech and t in universe:
+                    related[t] += 1
+    return match_count, related
+
+
+def _build_related_map(corpus, idf):
+    """{기술: [강하게 동반되는 기술들]}. IMPLICIT_MIN_RATIO 이상만 남긴다.
+
+    universe를 idf 어휘(158종)로 제한하는 이유는 01번과 같다 — 꼬리 노이즈
+    제거. 계산은 한 번만 하고 _CACHE에 저장한다(158 * 40,348건 스캔은
+    몇 초 걸리지만 매 recommend() 호출마다 할 일은 아니다)."""
+    universe = set(idf)
+    jobs = [canon for canon, _ in job_pool.techs_series(corpus)]
+    related_map = {}
+    for base in universe:
+        match_count, related = compute_related_techs(jobs, base, universe)
+        if not match_count:
+            continue
+        strong = [(t, c) for t, c in related.items()
+                  if c / match_count >= IMPLICIT_MIN_RATIO]
+        strong.sort(key=lambda x: -x[1])
+        if strong:
+            related_map[base] = [t for t, _ in strong[:IMPLICIT_TOP_K]]
+    return related_map
+
+
+def _expand_related(techs: set, related_map: dict) -> set:
+    expanded = set(techs)
+    for t in techs:
+        expanded.update(related_map.get(t, ()))
+    return expanded
+
+
+# ---------------------------------------------------------------------------
+# STEP 5-3 — 스킬 0개 이력서 폴백 (empty_resume_fallback)
+# ---------------------------------------------------------------------------
+# ⚠️ 이 플래그의 채택 여부는 아직 팀 결정이 안 났다 — "빈 결과로 둘지 텍스트
+#    유사도 폴백을 둘지"가 논의 중이고, 폴백을 두면 4단계 임베딩과 역할이
+#    겹친다는 우려가 있었다. 결정에 쓸 판단 자료가 있어야 하니 최소한의
+#    버전(단어 겹침 Jaccard)만 만들어 둔다 — 이게 최종안이라는 뜻이 아니다.
+#    진짜 텍스트 유사도(임베딩)가 들어오면 이 함수는 교체될 가능성이 높다.
+_WORD_RE = re.compile(r"[A-Za-z가-힣0-9]+")
+
+
+def _tokenize(text: str) -> set:
+    return {w.lower() for w in _WORD_RE.findall(text or "") if len(w) >= 2}
+
+
+def _text_fallback(resume_text, pool, filters, top_k):
+    mine_words = _tokenize(resume_text)
+    if not mine_words:
+        return []
+    scored = []
+    for _, row in pool.iterrows():
+        if not _passes_filters(row, filters):
+            continue
+        job_words = _tokenize(row.get("raw_text") or "")
+        if not job_words:
+            continue
+        union = mine_words | job_words
+        sc = len(mine_words & job_words) / len(union) if union else 0.0
+        if sc > 0:
+            scored.append((sc, str(row["job_id"])))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [
+        (job_id, sc, {"matched_techs": [], "matched_count": 0,
+                      "fallback": "text_overlap"})
+        for sc, job_id in scored[:top_k]
+    ]
+
+
+# ---------------------------------------------------------------------------
+# STEP 5-4 — 비사전 스킬 포함 여부 (use_skills_extra)
+# ---------------------------------------------------------------------------
+# 이력서 쪽에서 "엑셀"·"정보처리기사" 같은 비사전 스킬을 뽑으려면, job_pool의
+# split_skills()처럼 구조화된 목록이 없으니(이력서는 자유 텍스트) 코퍼스에
+# 나오는 비사전 스킬 어휘를 미리 모아두고 부분 문자열로 찾는다.
+EXTRA_VOCAB_MIN_DF = 5
+
+
+def _build_extras_vocab(corpus):
+    df = Counter()
+    for _, extra in job_pool.techs_series(corpus):
+        df.update(extra)
+    return {t for t, c in df.items() if c >= EXTRA_VOCAB_MIN_DF}
+
+
+def _extract_extras(resume_text, vocab):
+    text = (resume_text or "").lower()
+    return {t for t in vocab if t in text}
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +309,18 @@ def reset_cache():
     _CACHE.clear()
 
 
+def _get_related_map(corpus, idf):
+    if "related_map" not in _CACHE:
+        _CACHE["related_map"] = _build_related_map(corpus, idf)
+    return _CACHE["related_map"]
+
+
+def _get_extras_vocab(corpus):
+    if "extras_vocab" not in _CACHE:
+        _CACHE["extras_vocab"] = _build_extras_vocab(corpus)
+    return _CACHE["extras_vocab"]
+
+
 # ---------------------------------------------------------------------------
 # 필터 — "값 없으면 통과" (TASK-skill-matching.md 안건 2에서 확정된 설계)
 # ---------------------------------------------------------------------------
@@ -194,33 +353,42 @@ def recommend(resume_text: str, top_k: int = 10, filters: dict = None,
     scorer = SCORERS[score_mode]
 
     flags = {**DEFAULT_FLAGS, **(flags or {})}
-    _, idf, pool = _load(as_of=as_of)
+    corpus, idf, pool = _load(as_of=as_of)
 
+    # --- 이력서에서 기술 뽑기 + STEP 5 플래그 적용 ---
     mine = extract_techs(resume_text)
-    if flags["use_skills_extra"]:
-        # TODO STEP 5: skills_extra 어휘와도 매칭시키려면 여기서 이력서 쪽
-        # 비사전 스킬도 뽑아야 한다 (지금은 표준 기술명만 뽑음).
-        pass
 
-    if not mine:
-        if flags["empty_resume_fallback"]:
-            pass  # TODO STEP 5: 텍스트 유사도 폴백 (4단계 임베딩과 역할 겹침 — 논의 중)
-        return []
+    if flags["hypernym_match"]:
+        mine = _expand_hypernyms(mine)
 
     if flags["implicit_related"]:
-        pass  # TODO STEP 5: compute_related_techs로 mine을 확장
+        related_map = _get_related_map(corpus, idf)
+        mine = _expand_related(mine, related_map)
 
+    mine_extra = set()
+    if flags["use_skills_extra"]:
+        extras_vocab = _get_extras_vocab(corpus)
+        mine_extra = _extract_extras(resume_text, extras_vocab)
+
+    eff_mine = mine | mine_extra
+
+    if not eff_mine:
+        if flags["empty_resume_fallback"]:
+            return _text_fallback(resume_text, pool, filters, top_k)
+        return []
+
+    # --- 채점 ---
     scored = []
     for _, row in pool.iterrows():
-        techs = row["techs"]
+        job_techs = row["techs"]
         if flags["use_skills_extra"]:
-            techs = techs | row["skills_extra"]
-        hit = mine & techs
+            job_techs = job_techs | row["skills_extra"]
+        hit = eff_mine & job_techs
         if not hit:
             continue
         if not _passes_filters(row, filters):
             continue
-        sc = scorer(hit, mine, techs, idf)
+        sc = scorer(hit, eff_mine, job_techs, idf)
         scored.append((sc, str(row["job_id"]), sorted(hit)))
 
     # job_id를 2차 키로 둬서 완전 동점이어도 실행할 때마다 순서가 안 바뀌게
