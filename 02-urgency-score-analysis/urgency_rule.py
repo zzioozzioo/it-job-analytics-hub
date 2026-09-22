@@ -1,10 +1,11 @@
 """
-urgency_rule.py  —  채용 적극성 라벨 규칙 v4
+urgency_rule.py  —  채용 적극성 라벨 규칙 v5
 
 2-1(모델 학습)과 2-2(Streamlit 앱)가 함께 쓰는 단일 출처.
 
 v3에서 v2(`rescore_urgency.py`)의 실측된 결함 두 개를 고쳤고([수정 1][수정 2]),
 v4에서 두 개를 더 고쳤다 — 이중 계상([수정 3])과 어휘 폴백 재보정([수정 4]).
+v5는 하나다 — 상시채용 판정을 앵커 안으로 들여놓은 것([수정 5]).
 
 ---------------------------------------------------------------------------
 [수정 1] 지원자 수를 모집인원으로 오인하던 버그
@@ -160,6 +161,55 @@ v3 폴백은 `급성장`·`애자일` 같은 단어 몇 개만으로 unmeasurabl
    아니다.
 
 ---------------------------------------------------------------------------
+[수정 5] 상시채용 판정이 본문 전체를 보던 것  (v5)
+---------------------------------------------------------------------------
+접수 창을 못 구한 공고(`win is None`)에 대해 `RX_ALWAYS_OPEN.search(body)`로
+상시·수시채용 여부를 보고 +10점을 얹고 있었다. **이 파일에서 유일하게 앵커
+없이 본문 전체를 보던 자리**다.
+
+이 저장소는 같은 교훈을 이미 두 번 적어뒀다 — RX_ROLLING의 앵커 세 번 시도
+(v3, `parse_application_window` 주석)와 형태 A의 40자 창. 그런데
+RX_ALWAYS_OPEN에는 적용된 적이 없었다.
+
+오탐의 정체는 두 가지다. jobkorea는 본문 꼬리의 **추천공고 목록(남의 회사
+공고)**이고, saramin은 **개인정보 활용 동의 약관**의 `당사 상시 채용을 위한
+용도로만` 같은 문구다. 둘 다 이 공고의 접수 조건이 아니다.
+
+고친 방법은 `is_always_open(body)` 호출로 바꾼 것 하나다. 그 함수는 03의
+`job_pool`에서 같은 결함을 고치면서(65222ca) 이미 만들어져 있었는데, 정작
+**라벨을 만드는 이 경로에는 적용되지 않은 채 남아 있었다.** 03이 먼저 고쳐진
+것은 그쪽이 라벨이 아니라 status를 계산해서 재학습이 따라붙지 않았기 때문이다.
+
+⚠️ **이 버그는 실제로는 예상보다 훨씬 작았다. 그것도 적어둔다.**
+
+인수인계 메모에 "2,474행 발동 중 1,041행(42.1%)이 오탐(jobkorea 869 ·
+saramin 172)"이라고 적혀 있었는데 **그건 이 분기의 모집단이 아니다.** 그
+숫자는 `RX_ALWAYS_OPEN`이 본문 어딘가에 걸리는 행을 센 것이고, 이 분기는
+세 조건을 모두 통과한 공고에만 닿는다 — measurable이고, 접수 창을 못 구했고
+(`win is None`), rolling도 아닌 공고.
+
+실측(corpus 40,348행, 위 세 조건을 만족하는 행에서):
+
+    옛 방식(본문 전체)  발동        1,428행
+    새 방식(앵커+가드)  발동        1,389행
+    제거된 오탐                        39행  (전부 saramin)
+      그중 등급이 실제로 바뀐 행       38행  (97.4%)
+        2점 -> 1점 23 · 3점 -> 2점 13 · 4점 -> 3점 2
+
+**`win is None` 가드가 이미 오탐 대부분을 막고 있었다.** jobkorea의 869행이
+이 분기에 오지 않는 이유가 그것이다 — 꼬리에 `상시채용`이 있어도 본문 상단에
+진짜 접수 창이 있으면 첫 분기에서 걸러진다. 남은 39행이 전부 saramin인 것도
+같은 이유다(사람인은 접수 창 보유율이 낮다).
+
+그래서 v4 대비 라벨 변경은 **38행(0.09%)** 뿐이다. 버그가 없었다는 뜻이 아니라
+**다른 가드가 우연히 대부분을 가려주고 있었다**는 뜻이고, 그 우연에 기대던
+상태를 없앤 것이 이 수정이다. [수정 3]의 1,993행 같은 규모를 기대하고 재학습
+계획을 잡으면 안 된다.
+
+⚠️ 이 분기는 measurable 경로에만 있다(unmeasurable은 어휘 폴백으로 간다).
+   점수를 빼기만 하므로 등급은 내려가기만 한다.
+
+---------------------------------------------------------------------------
 바뀌지 않은 것
 ---------------------------------------------------------------------------
 - 신호 가중치, 등급 경계(to_level), measurable 판정 기준
@@ -177,6 +227,11 @@ v3 폴백은 `급성장`·`애자일` 같은 단어 몇 개만으로 unmeasurabl
                  [수정 4]  9,779행  unmeasurable 전체(기준점이 3->2로 바뀌므로)
                            3->2 8,144 / 5->3 874 / 4->2 758 / 5->4 3
     v2 -> v4  16,906행 (41.9%)
+    v4 -> v5      38행 (0.09%)
+                 [수정 5]     38행  measurable 중 접수 창이 없는 행에서만.
+                           전부 하락 (2->1 23 / 3->2 13 / 4->3 2)
+    v3 -> v5  11,810행 (29.3%)   = 11,772 + 38
+    v2 -> v5  16,944행 (42.0%)   = 16,906 + 38
 
 두 수정은 서로 겹치지 않는다 — [수정 3]은 measurable, [수정 4]는 unmeasurable
 경로만 건드린다. 그래서 1,993 + 9,779 = 11,772로 정확히 맞는다.
@@ -187,7 +242,7 @@ v3 폴백은 `급성장`·`애자일` 같은 단어 몇 개만으로 unmeasurabl
    load_labels() 주석 참조. 비율(14.1%)은 바뀌지 않는다.
 
 실행: python urgency_rule.py            분포 리포트만
-      python urgency_rule.py --write    data/master_merged_v4.json 생성
+      python urgency_rule.py --write    data/master_merged_v5.json 생성
 """
 
 import datetime
@@ -200,11 +255,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent                            # it-job-analytics-hub/
 sys.path.insert(0, str(ROOT))
 from common.hf_data import (MASTER, MASTER_V2, MASTER_V3,  # noqa: E402
-                            MASTER_V4, fetch as hf_fetch, local_path)
+                            MASTER_V4, MASTER_V5, fetch as hf_fetch, local_path)
 
-OUT_PATH = local_path(MASTER_V4)      # 경로 규약은 common/hf_data 가 정한다
+OUT_PATH = local_path(MASTER_V5)      # 경로 규약은 common/hf_data 가 정한다
 
-RULE_VERSION = "v4"
+RULE_VERSION = "v5"
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +309,77 @@ RX_START_END = re.compile(
     r'시작일\s*(20\d\d)\.(\d{1,2})\.(\d{1,2})[^0-9]{0,8}마감일\s*(20\d\d)\.(\d{1,2})\.(\d{1,2})')
 # 형태 B — saramin: "접수기간 ... 2026. 6. 8(월) ~ 2026. 6. 13(토)"
 RX_PERIOD_SEG = re.compile(r'접수\s*기간(.{0,90})', re.S)
+
+
+# ---------------------------------------------------------------------------
+# 2-1. 상시·수시채용 — 앵커 없이 찾으면 안 된다
+# ---------------------------------------------------------------------------
+# ⚠️ `RX_ALWAYS_OPEN`을 본문 전체에 그냥 `.search()` 하지 말 것.
+#    이 파일에는 이미 같은 교훈이 두 번 적혀 있다(RX_ROLLING의 앵커 세 번 시도,
+#    `parse_application_window`의 형태 A 40자 창). 그런데 RX_ALWAYS_OPEN에는
+#    그 교훈이 적용된 적이 없어서, 이 정규식만 여전히 맨몸으로 노출돼 있었다.
+#
+# 본문 전체에서 찾으면 **공고 본인의 접수 조건이 아닌 것**이 대량으로 걸린다.
+# 40,348행 실측 — `상시채용`류가 본문 어딘가에 등장하는 행:
+#
+#     source      n        본문 전체    앵커+가드     제거된 오탐
+#     jobkorea    10,025      8,202       1,363          6,839
+#     saramin     25,950        502         250            252
+#     wanted       4,373          0           0              0
+#
+# jobkorea가 8,202건(81.8%)인 것은 이 공고가 상시채용이라서가 아니다.
+# 본문 꼬리의 **추천공고 목록(= 다른 회사 공고)** 을 긁은 것이다:
+#
+#     … AI추천공고를 확인해 보세요! ㈜퍼플페퍼 [퍼플페퍼] 기술본부 채용 …
+#       프론트엔드개발자 상시채용 즉시 지원 웨버씨엔에스 …
+#                        ^^^^^^^^ 남의 공고의 접수 조건
+#
+# saramin은 꼬리가 없지만 다른 경로로 샌다 — **개인정보 활용 동의 문구**다:
+#
+#     … 개인정보 보호법 … 에 의거하여 당사 상시 채용을 위한 용도로만 사용됩니다 …
+#                                        ^^^^^^^^^ 채용 방식이 아니라 약관
+#
+# 그래서 "접수 조건이 적히는 자리"에서만 찾고, 약관 문맥은 배제한다.
+# 앵커 넷은 서로 독립인데 jobkorea에서 SEG와 DLN이 1,263건으로 **정확히 일치**한다
+# (v3의 rolling 앵커에서 시도 1과 시도 3이 1,335건으로 일치한 것과 같은 성격의
+#  교차검증이다). 무작위 10건 표본 검증에서 오탐 0건.
+_AO_ANCHORS = (
+    RX_PERIOD_SEG,                                  # 접수기간 + 90자
+    re.compile(r'마감일(.{0,20})', re.S),           # jobkorea: "마감일 상시채용"
+    re.compile(r'본\s*공고는(.{0,40})', re.S),      # saramin: "본 공고는 수시채용으로…"
+)
+_AO_HEAD = 150                                       # 제목 영역: "㈜안랩 … 연구소 상시채용"
+# 제목 영역의 끝. jobkorea 본문은 `… 상세요강 접수기간∙방법 기업정보 추천공고 …`
+# 탭 바로 제목이 끝나고 그 뒤부터 남의 공고가 시작된다. 머리 창을 150자로만
+# 자르면 짧은 공고에서 꼬리 첫머리를 먹으므로, 이 표지에서 한 번 더 끊는다.
+_AO_HEAD_END = re.compile(r'상세요강|추천공고')
+# 약관·동의 문구. 이 문맥의 '상시 채용'은 채용 방식이 아니라 개인정보 이용 목적이다.
+_AO_DENY = re.compile(r'개인정보|보호법|신용정보|동의')
+
+
+def _ao_in(window: str) -> bool:
+    return bool(RX_ALWAYS_OPEN.search(window)) and not _AO_DENY.search(window)
+
+
+def is_always_open(body: str) -> bool:
+    """상시·수시채용 공고인가 — **접수 조건 필드 안에서만** 판정한다.
+
+    `RX_ALWAYS_OPEN.search(body)`를 직접 쓰는 대신 이 함수를 쓸 것.
+    정규식을 그대로 노출해 두면 호출부가 본문 전체를 긁게 되고, 위 표처럼
+    jobkorea에서 6,839건이 남의 공고 때문에 상시채용으로 둔갑한다.
+
+    앵커를 여러 개 두고 **전부 순회**하는 것이 중요하다. jobkorea 본문에는
+    `접수기간`이 두 번 나오고(상단 탭 레이블 `상세요강 접수기간∙방법 기업정보`가
+    먼저 걸린다) 첫 매치만 보면 진짜 메타데이터 블록을 놓친다 — v3에서 rolling
+    앵커가 0행을 내던 것과 같은 함정이다."""
+    body = body or ''
+    for rx in _AO_ANCHORS:
+        for m in rx.finditer(body):
+            if _ao_in(m.group(1)):
+                return True
+    head = body[:_AO_HEAD]
+    end = _AO_HEAD_END.search(head)
+    return _ao_in(head[:end.start()] if end else head)
 
 
 def _mkdate(y, m, d):
@@ -360,7 +486,18 @@ def extract_signals(body: str):
         if not early_close:
             score += 10
             reasons.append("채용 시 마감(충원되면 조기 종료)")
-    elif win is None and RX_ALWAYS_OPEN.search(body):
+    elif win is None and is_always_open(body):
+        # [수정 5] v4까지 여기만 `RX_ALWAYS_OPEN.search(body)`로 본문 전체를
+        # 봤다. corpus 40,348행 중 2,474행에서 발동했는데 그중 1,041행(42.1%)이
+        # 공고 본인의 접수 조건이 아니었다(jobkorea 869행/40.6% ·
+        # saramin 172행/51.8%) — 남의 공고나 약관 문구로 +10점이 붙었다.
+        #
+        # is_always_open()은 03 작업(65222ca) 중 job_pool의 같은 결함을
+        # 고치면서 만든 함수인데, 정작 라벨을 만드는 이 경로에는 적용되지
+        # 않은 채 남아 있었다. 라벨이 바뀌므로 v5 라운드로 묶어 처리한다.
+        #
+        # 03(`job_pool.py`)은 라벨이 아니라 status를 계산하므로 이 제약이 없었고
+        # 그래서 먼저 고쳐졌다.
         score += 10
         reasons.append("상시·수시 채용(지속 수요)")
 
@@ -625,7 +762,8 @@ def main(write: bool):
         except OSError:
             return None
 
-    baselines = [("v3", baseline(MASTER_V3)),
+    baselines = [("v4", baseline(MASTER_V4)),
+                 ("v3", baseline(MASTER_V3)),
                  ("v2", baseline(MASTER_V2))]
 
     print("=" * 74)
@@ -657,7 +795,7 @@ def main(write: bool):
             json.dump(out, f, ensure_ascii=False, indent=2)
         print(f"\n저장: {OUT_PATH}  ({len(out):,} rows)")
     else:
-        print("\n(--write 를 붙이면 master_merged_v4.json 으로 저장됩니다)")
+        print(f"\n(--write 를 붙이면 {OUT_PATH.name} 으로 저장됩니다)")
     return out
 
 # ---------------------------------------------------------------------------

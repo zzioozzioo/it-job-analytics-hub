@@ -20,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from urgency_rule import (FALLBACK_BASE, FALLBACK_SCALE,  # noqa: E402
                           RX_EARLY_CLOSE, RX_ROLLING, apply_fallback_scale,
-                          clean_body, extract_signals, parse_application_window,
+                          clean_body, extract_signals, is_always_open,
+                          parse_application_window,
                           score_by_vocabulary, score_posting,
                           vocabulary_evidence)
 
@@ -116,6 +117,86 @@ def test_rolling_anchor_does_not_reach_into_body():
     text = (f"{WIN30_A} 모집인원 1 명 "
             "우리 회사는 성장 중입니다 " * 3 + "채용 시 마감이라는 말이 본문에 있음")
     assert parse_application_window(text)[1] is False, "앵커 밖 문구로 rolling이 켜지면 안 된다"
+
+
+# ---------------------------------------------------------------------------
+# 상시·수시채용 앵커 — RX_ROLLING에만 적용돼 있던 교훈을 여기에도 적용한다
+# ---------------------------------------------------------------------------
+# 바로 위 rolling 앵커 테스트와 같은 함정인데, RX_ALWAYS_OPEN에는 적용된 적이
+# 없었다. 본문 전체에서 찾으면 jobkorea 10,025건 중 8,202건(81.8%)이 걸리는데
+# 대부분 **추천공고 꼬리(남의 공고)** 다. 앵커를 넣으면 1,363건이 된다.
+# 03의 `job_pool.py`가 이 함수를 써서 status를 계산한다.
+def test_always_open_reads_the_deadline_field():
+    """jobkorea의 진짜 형태 — `마감일`이 날짜가 아니라 `상시채용`인 필드값."""
+    assert is_always_open(
+        "지원자격 경력 경력 접수기간 · 방법 시작일 2026.05.06(수) "
+        "마감일 상시채용 접수방법 잡코리아 즉시지원") is True
+
+
+def test_always_open_reads_the_period_field():
+    """saramin의 진짜 형태 — `접수기간 : 상시채용`."""
+    assert is_always_open("전형절차 접수기간 및 방법 ㆍ접수기간 : 상시모집 "
+                          "ㆍ접수방법 : 사람인 입사지원") is True
+
+
+def test_always_open_in_title_counts():
+    """제목에 적힌 것도 이 공고 본인의 것이다 — `㈜안랩 2026년 연구소 상시채용`."""
+    assert is_always_open("㈜윈스테크넷 상시채용(신입) - 보안 솔루션 개발 "
+                          "상세요강 접수기간∙방법 기업정보 추천공고") is True
+
+
+def test_always_open_ignores_recommendation_tail():
+    """**이 버그의 본체.** 꼬리의 `상시채용`은 남의 공고 것이다.
+
+    jobkorea 본문 뒤쪽은 추천공고 목록이라 다른 회사의 접수 조건이 그대로
+    들어 있다. 본문 전체 검색은 이걸 6,839건이나 주워 담았다."""
+    text = ("㈜우리회사 백엔드 개발자 모집 상세요강 접수기간∙방법 기업정보 추천공고 "
+            "모집요강 모집분야 백엔드 " + "본문입니다 " * 40 +
+            "AI추천공고를 확인해 보세요! ㈜다른회사 프론트엔드 채용 "
+            "서울 > 마포구 프론트엔드개발자 상시채용 즉시 지원")
+    assert is_always_open(text) is False, "남의 공고 접수 조건이 걸리면 안 된다"
+
+
+def test_always_open_ignores_privacy_boilerplate():
+    """saramin의 오탐원 — 약관 문구의 '상시 채용'은 채용 방식이 아니다.
+
+    `개인정보 보호법 …에 의거하여 당사 상시 채용을 위한 용도로만 사용됩니다`는
+    개인정보 이용 목적이지 이 공고가 상시채용이라는 뜻이 아니다."""
+    text = ("모집분야 백엔드 " + "본문 " * 40 +
+            "* 본 입사지원서 상의 개인정보는 [개인정보 보호법] 제15조에 의거하여 "
+            "당사 상시 채용을 위한 용도로만 사용됩니다")
+    assert is_always_open(text) is False
+
+
+def test_always_open_scoring_path_uses_the_anchor():
+    """[수정 5] 채점 경로도 앵커를 쓴다 — v4까지 여기만 본문 전체를 봤다.
+
+    `is_always_open()`이 맞는 것과 **채점 분기가 그걸 쓰는 것**은 다른 문제다.
+    실제로 v4까지 함수는 있는데 채점은 여전히 `RX_ALWAYS_OPEN.search(body)`를
+    부르고 있었다(corpus 2,474행 발동 중 1,041행이 남의 공고·약관). 위쪽
+    is_always_open 테스트들이 전부 통과하는 상태에서도 이 버그가 살아 있었으므로
+    채점 경로를 따로 고정한다."""
+    tail = ("㈜우리회사 백엔드 개발자 모집 상세요강 접수기간∙방법 기업정보 추천공고 "
+            + "본문입니다 " * 40 +
+            "AI추천공고를 확인해 보세요! ㈜다른회사 프론트엔드 채용 "
+            "프론트엔드개발자 상시채용 즉시 지원")
+    real = ("㈜우리회사 백엔드 개발자 모집 지원자격 경력 경력 "
+            "접수기간 · 방법 마감일 상시채용 접수방법 잡코리아 즉시지원")
+
+    assert '상시' in score_posting(real, 'jobkorea')['urgency_reason'], \
+        "진짜 상시채용 공고는 계속 점수를 받아야 한다"
+    assert '상시' not in score_posting(tail, 'jobkorea')['urgency_reason'], \
+        "추천공고 꼬리(남의 공고)로 상시채용 점수가 붙으면 안 된다"
+
+
+def test_always_open_scans_every_anchor_not_just_the_first():
+    """jobkorea 본문에는 `접수기간`이 두 번 나온다 — 탭 레이블이 먼저 걸린다.
+
+    첫 매치만 보면 진짜 메타데이터 블록을 놓친다. v3에서 rolling 앵커가
+    0행을 내던 것과 같은 함정이라 여기서 고정한다."""
+    text = ("㈜회사 채용 상세요강 접수기간∙방법 기업정보 추천공고 " + "안내 " * 30 +
+            "접수기간 · 방법 시작일 2026.06.08(월) 마감일 상시채용 접수방법 홈페이지")
+    assert is_always_open(text) is True, "첫 번째 `접수기간`(탭 레이블)에서 멈추면 안 된다"
 
 
 # ---------------------------------------------------------------------------

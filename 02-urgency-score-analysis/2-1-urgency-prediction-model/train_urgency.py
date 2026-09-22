@@ -2,7 +2,8 @@
 train_urgency.py
 
 새 라벨(`urgency_rule.py`)로 학습하고, 직전 라벨 대비 무엇이 나아졌는지를
-같은 파이프라인 위에서 측정한다. 라운드는 `--v4` 로 고른다(기본값 v3).
+같은 파이프라인 위에서 측정한다. 라운드는 `--v4`/`--v5` 로 고른다(기본값 v3).
+현행 정본은 **v5**다.
 
 ※ 파일명에 버전을 넣지 않는다. v3 전용이던 시절 이름이 `train_urgency_v3.py`
    였는데 v4까지 이 스크립트가 학습하게 되면서 이름이 내용과 어긋났다.
@@ -41,6 +42,7 @@ train_urgency_transfer.py는 EXP-A의 모델을 **test QWK로** 골랐다
   python train_urgency.py --struct       # [실험] 구조화 피처 추가
   python train_urgency.py --struct-only  # [실험] 전이를 구조화 피처만으로
   python train_urgency.py --v4           # v4 라벨 학습 + v3 대비 비교 -> models_v4/
+  python train_urgency.py --v5           # v5 라벨 학습 + v4 대비 비교 -> models_v5/ (현행 정본)
 
 ---------------------------------------------------------------------------
 v4 라운드 (--v4)
@@ -73,8 +75,8 @@ v4가 고친 것(`urgency_rule.py` [수정 3][수정 4]):
 재현한 것이지 일반화가 아니다(2-1/02 README의 ablation 참조).
 
 그래서 실험 플래그로만 두고, 켜면 결과를 models_<라운드>_struct/ 에 저장한다
-(--v4 면 models_v4_struct/). 정본 디렉터리는 건드리지 않는다.
-앱이 로드하는 정본 models_v4/ 는 통제가 걸린 모델로 유지된다.
+(--v5 면 models_v5_struct/). 정본 디렉터리는 건드리지 않는다.
+앱이 로드하는 정본 models_v5/ 는 통제가 걸린 모델로 유지된다.
 """
 
 import argparse
@@ -106,17 +108,19 @@ from train_urgency_baseline import (N_CLASSES, RANDOM_STATE,  # noqa: E402
                                     Timer, build_tfidf, dedup_and_group,
                                     evaluate, make_transform, rule)
 from common.hf_data import (MASTER_V2, MASTER_V3,  # noqa: E402
-                            MASTER_V4, fetch as hf_fetch)
+                            MASTER_V4, MASTER_V5, fetch as hf_fetch)
 
-# 어떤 라벨 버전을 학습하고 무엇과 비교할지. --v4 로 고른다.
+# 어떤 라벨 버전을 학습하고 무엇과 비교할지. --v4 / --v5 로 고른다.
 #   new = 학습·저장 대상,  old = EXP-B에서 나란히 놓을 직전 버전
 # 경로가 아니라 **파일명**을 들고 있다가 common.hf_data.fetch()로 연다.
 # fetch()가 "data/에 있으면 그것, 없으면 data/로 다운로드, 둘 다 안 되면
-# 만드는 명령 안내"를 한 곳에서 처리한다. v4 라벨은 --write 산출물이지만
-# 2026-09-14에 허깅페이스에도 올렸으므로, 로컬에 없어도 그냥 받아진다.
+# 만드는 명령 안내"를 한 곳에서 처리한다. 라벨 파일은 --write 산출물이지만
+# v2~v5가 전부 허깅페이스에도 올라가 있으므로(v5는 2026-09-21), 로컬에 없어도
+# 그냥 받아진다.
 ROUNDS = {
     'v3': {'new': ('v3', MASTER_V3), 'old': ('v2', MASTER_V2), 'out': 'models_v3'},
     'v4': {'new': ('v4', MASTER_V4), 'old': ('v3', MASTER_V3), 'out': 'models_v4'},
+    'v5': {'new': ('v5', MASTER_V5), 'old': ('v4', MASTER_V4), 'out': 'models_v5'},
 }
 
 VARIANT = 'masked+clean'
@@ -307,9 +311,13 @@ def main():
     ap.add_argument('--v4', action='store_true',
                     help='v4 라벨로 학습하고 v3와 비교한다 (기본값은 v3 vs v2). '
                          '저장 위치는 models_v4/')
+    ap.add_argument('--v5', action='store_true',
+                    help='v5 라벨로 학습하고 v4와 비교한다. 저장 위치는 models_v5/. '
+                         'v5는 v4와 38행만 다르므로(라벨의 0.09%%) 성능 차이는 '
+                         '학습 변동 수준일 것으로 예상된다 — urgency_rule [수정 5]')
     args = ap.parse_args()
     use_struct = args.struct or args.struct_only
-    cfg = ROUNDS['v4' if args.v4 else 'v3']
+    cfg = ROUNDS['v5' if args.v5 else ('v4' if args.v4 else 'v3')]
     new_tag, old_tag = cfg['new'][0], cfg['old'][0]
     t_start = time.time()
 

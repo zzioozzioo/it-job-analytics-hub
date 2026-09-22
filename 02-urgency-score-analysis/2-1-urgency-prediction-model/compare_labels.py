@@ -27,6 +27,7 @@ v4 라운드도 같은 방식으로 본다(`--v4`).
 
 실행: python compare_labels.py         # v2 라벨 vs v3 라벨
       python compare_labels.py --v4    # v3 라벨 vs v4 라벨
+      python compare_labels.py --v5    # v4 라벨 vs v5 라벨
 """
 
 import json
@@ -52,7 +53,7 @@ VARIANT = 'masked+clean'
 MAX_FEATURES = 30000
 
 # (옛 라벨, 새 라벨) — 파일명만 들고 있다가 common.hf_data.fetch()로 연다.
-ROUNDS = {False: ('v2', 'v3'), True: ('v3', 'v4')}
+ROUNDS = {'v3': ('v2', 'v3'), 'v4': ('v3', 'v4'), 'v5': ('v4', 'v5')}
 
 
 def load(old_tag, new_tag):
@@ -81,8 +82,8 @@ def load(old_tag, new_tag):
     return df[df['raw_text'].map(is_measurable)].reset_index(drop=True)
 
 
-def main(use_v4=False):
-    old_tag, new_tag = ROUNDS[use_v4]
+def main(round_tag='v3'):
+    old_tag, new_tag = ROUNDS[round_tag]
     tag_of = {'y_old': old_tag, 'y_new': new_tag}
     meas = load(old_tag, new_tag)
     conv = make_transform(VARIANT)
@@ -158,11 +159,25 @@ def main(use_v4=False):
     print("    · MAE 개선은 각 라벨 세트의 자기 상수 대비 %이므로 분포 차이가 상쇄된다.")
     print("    · MAE 개선이 음수면 그 모델은 '항상 같은 값 찍기'보다 못하다는 뜻이다.")
 
+    # 라운드마다 통째로 덮어쓰면 직전 라운드의 행이 사라진다. 이 파일은
+    # README가 인용하는 기록이므로 **이번 라운드가 새로 잰 라벨만 갈아끼우고
+    # 나머지는 보존한다.** (--v4 로 돌리면 v3·v4 두 줄이 갱신되고 v2 줄은 남는다)
     out = HERE / "compare_labels.json"
-    out.write_text(json.dumps(df.to_dict('records'), ensure_ascii=False,
+    rows = df.to_dict('records')
+    fresh = {r['label'] for r in rows}
+    if out.exists():
+        try:
+            kept = [r for r in json.loads(out.read_text(encoding='utf-8'))
+                    if r.get('label') not in fresh]
+        except ValueError:
+            kept = []
+        rows = kept + rows
+    rows.sort(key=lambda r: (str(r.get('label')), str(r.get('target'))))
+    out.write_text(json.dumps(rows, ensure_ascii=False,
                               indent=2, default=float), encoding='utf-8')
-    print(f"\n  저장: {out.name}")
+    print(f"\n  저장: {out.name}  ({len(rows)}행, 이번 라운드가 갱신한 라벨: "
+          f"{' · '.join(sorted(fresh))})")
 
 
 if __name__ == '__main__':
-    main('--v4' in sys.argv)
+    main('v5' if '--v5' in sys.argv else ('v4' if '--v4' in sys.argv else 'v3'))
