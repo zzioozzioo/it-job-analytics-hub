@@ -4,26 +4,27 @@ skill_matcher.py — 이력서 텍스트를 받아 공고를 추천한다.
 담당: 심지우 · 참고 문서: TASK-skill-matching.md, HANDOFF-skill-matching.md
 
 ---------------------------------------------------------------------------
-지금 이 파일의 상태 — 5단계(설계 결정 4개 플래그) 완료
+지금 이 파일의 상태 — 5단계 완료 + 팀 피드백 반영 (2026-09-22)
 ---------------------------------------------------------------------------
     STEP 3  IDF 가중 합산                                          [완료]
-    STEP 4  동점 처리·정규화 — 5개 후보 구현, 기본값은 length_norm    [완료]
+    STEP 4  동점 처리·정규화 — 5개 후보 구현, length_norm이 팀 채택 확정  [완료]
     STEP 5  설계 결정 4개 플래그의 실제 분기 로직                     [완료]
 
-STEP 5에서 채운 것 — 전부 기본값 False, 끄고 켤 수만 있게. 최종 채택 여부는
-eval_proxy로 김민석이 비교(브리프 "플래그로 두고 프록시로 고른다"):
-    hypernym_match        Spring Boot -> Spring 등 상위 개념 함의
-                          (팀이 확정한 한 쌍만 HYPERNYM_MAP에 시드로 넣음)
-    implicit_related      01/app.py:503 compute_related_techs를 그대로 이식,
-                          코퍼스 전체 동시출현으로 "암묵적으로 같이 요구되는"
-                          기술을 확장
-    empty_resume_fallback 스킬 0개 이력서 폴백. ⚠️ 이 항목은 아직 팀 결정이
-                          안 났다(회의 안건 3, 두 번째 항목 미정) — 판단 자료를
-                          만들기 위해 최소한의 단어-겹침 버전만 구현했다.
-                          진짜 텍스트 유사도는 4단계 임베딩 몫.
-    use_skills_extra      비사전 스킬(엑셀 등)도 매칭 키에 포함할지.
-                          김민석 실측 65.7% vs 68.7% — 이미 더 나쁘다고 나옴,
-                          기본 False 권장.
+김민석 리뷰(2026-09-22)에서 나온 세 가지를 반영했다:
+    1. 모든 스코어러의 sum()을 정렬된 순서로 고정 — 파이썬 문자열 해시가
+       프로세스마다 무작위화돼(PEP 456) set을 그냥 순회하면 부동소수점
+       덧셈 순서가 실행마다 바뀐다. 동점이 지배적인 이 데이터에서는 그
+       흔들림이 순위를 뒤집는다. eval_proxy에서 실제로 겪은 버그와 동일
+       (Recall@10이 65.0/65.5/66.0%로 실행마다 달라졌었음).
+    2. recommend() 결과에서 job_id 중복 제거 — (source, job_id) 중복
+       777건 때문에 서로 다른 공고가 같은 job_id를 가질 수 있다.
+    3. 기준선 수치를 2026-09-17 HANDOFF 갱신판으로 교체 (이전
+       68.0%/95.0%대 값은 위 1번과 같은 종류의 버그로 무효화됨). 새 기준:
+       단순 IDF 65.0%, length_norm 92.5% (Recall@10, 100% 보유 조건).
+
+팀이 eval_proxy `--compare-norms`(6종 비교)로 이미 "sqrt(=length_norm) 유지"를
+결론 내렸다 — DEFAULT_SCORE_MODE는 그 결론과 일치한다. compare_score_modes()는
+그 결론을 다시 검증하고 싶을 때 쓰는 용도로 남겨둔다.
 
 이 파일 자체는 마지막에 지워질 코드가 아니라 계속 커지는 파일이다 — 뼈대 단계라고
 부실하게 짜면 위 단계에서 계속 다시 손대게 되니, "함수 하나만 비어있는" 게 아니라
@@ -231,18 +232,30 @@ def _extract_extras(resume_text, vocab):
 #   job_techs  그 공고가 요구하는 기술 전체 집합 (겹치지 않는 것 포함)
 #   idf        {기술명: idf}
 def _score_raw_idf(hit, mine, job_techs, idf):
-    """STEP 3과 동일 — 정규화 없음. 비교 대조군."""
-    return sum(idf.get(t, 0.0) for t in hit)
+    """STEP 3과 동일 — 정규화 없음. 비교 대조군.
+
+    ⚠️ sorted(hit)로 순서를 고정한다. 파이썬 문자열 해시는 프로세스마다
+    무작위화돼(PEP 456) set을 그냥 순회하면 덧셈 순서가 실행마다 바뀌고,
+    부동소수점 덧셈은 결합법칙이 안 맞아 마지막 비트가 흔들린다. 동점이
+    수십~수백 건씩 몰리는 이 데이터에서는 그 흔들림이 순위를 뒤집는다 —
+    김민석이 eval_proxy에서 실제로 겪은 버그(Recall@10이 실행마다
+    65.0/65.5/66.0%로 달라짐)와 같은 원인이다. 아래 다른 스코어러들도 동일."""
+    return sum(idf.get(t, 0.0) for t in sorted(hit))
 
 
 def _score_length_norm(hit, mine, job_techs, idf):
-    """HANDOFF 문서에서 이미 검증된 방식: 겹침 점수를 공고 전체 요구사항의
-    "규모"로 나눈다. 공고가 기술을 많이 요구할수록(=이력서가 그중 일부만
-    맞혀도 얻는 점수가) 나눠지므로, "적게 요구하는데 정확히 맞는 공고"가
-    "많이 요구하는데 일부만 맞는 공고"보다 위로 올라온다.
-    실측(HANDOFF): Recall@10 68.0% -> 95.0% (요구 스킬 100% 보유 조건)."""
-    denom = math.sqrt(sum(idf.get(t, 0.0) for t in job_techs)) or 1.0
-    return sum(idf.get(t, 0.0) for t in hit) / denom
+    """HANDOFF 문서에서 이미 검증된 방식이자, 팀이 실제로 채택을 확정한
+    방식이다(eval_proxy `--compare-norms`, 6종 비교 결론: "현행 sqrt 유지").
+    겹침 점수를 공고 전체 요구사항의 "규모"로 나눈다. 공고가 기술을 많이
+    요구할수록(=이력서가 그중 일부만 맞혀도 얻는 점수가) 나눠지므로, "적게
+    요구하는데 정확히 맞는 공고"가 "많이 요구하는데 일부만 맞는 공고"보다
+    위로 올라온다.
+
+    실측(HANDOFF, 2026-09-17 갱신 — 이전 68.0%/95.0%대 판은 프록시 자체의
+    비결정성 버그로 무효화됐다): 100% 보유 조건 Recall@10 65.0% -> 92.5%,
+    MRR 0.461 -> 0.728."""
+    denom = math.sqrt(sum(idf.get(t, 0.0) for t in sorted(job_techs))) or 1.0
+    return sum(idf.get(t, 0.0) for t in sorted(hit)) / denom
 
 
 def _score_jaccard(hit, mine, job_techs, idf):
@@ -257,9 +270,9 @@ def _score_cosine(hit, mine, job_techs, idf):
     """IDF를 벡터 가중치로 쓴 코사인 유사도. length_norm과 달리 이력서 쪽
     벡터의 크기(mine의 희귀도 총합)도 분모에 들어간다 — 희귀 기술을 많이
     아는 이력서일수록 어지간한 겹침으로는 상대적으로 점수가 덜 오른다."""
-    dot = sum(idf.get(t, 0.0) ** 2 for t in hit)
-    mine_norm = math.sqrt(sum(idf.get(t, 0.0) ** 2 for t in mine)) or 1.0
-    job_norm = math.sqrt(sum(idf.get(t, 0.0) ** 2 for t in job_techs)) or 1.0
+    dot = sum(idf.get(t, 0.0) ** 2 for t in sorted(hit))
+    mine_norm = math.sqrt(sum(idf.get(t, 0.0) ** 2 for t in sorted(mine))) or 1.0
+    job_norm = math.sqrt(sum(idf.get(t, 0.0) ** 2 for t in sorted(job_techs))) or 1.0
     return dot / (mine_norm * job_norm)
 
 
@@ -267,7 +280,7 @@ def _score_per_skill_count(hit, mine, job_techs, idf):
     """length_norm의 단순한 버전 — IDF가 아니라 그냥 "요구 기술 개수"로
     나눈다. 계산이 더 단순해 length_norm과 비교했을 때 IDF 기반 정규화가
     실제로 추가 이득이 있는지 확인하는 대조군 역할."""
-    return sum(idf.get(t, 0.0) for t in hit) / len(job_techs) if job_techs else 0.0
+    return sum(idf.get(t, 0.0) for t in sorted(hit)) / len(job_techs) if job_techs else 0.0
 
 
 SCORERS = {
@@ -343,9 +356,10 @@ def recommend(resume_text: str, top_k: int = 10, filters: dict = None,
               score_mode: str = DEFAULT_SCORE_MODE) -> list:
     """이력서 텍스트 -> [(job_id, score, evidence), ...]  점수 내림차순.
 
-    score_mode  SCORERS 중 하나. 기본값 "length_norm"은 HANDOFF 문서에서
-                이미 Recall@10 68.0%->95.0%로 확인된 방식이다. 다른 방식과
-                비교하려면 compare_score_modes()를 쓴다.
+    score_mode  SCORERS 중 하나. 기본값 "length_norm"은 팀이 eval_proxy
+                `--compare-norms`(6종 비교)로 채택을 확정한 방식이다.
+                실측(2026-09-17 갱신판): Recall@10 65.0%->92.5%(100% 보유
+                조건). 다른 방식과 비교하려면 compare_score_modes()를 쓴다.
     """
     if score_mode not in SCORERS:
         raise ValueError(f"알 수 없는 score_mode: {score_mode!r}. "
@@ -395,10 +409,22 @@ def recommend(resume_text: str, top_k: int = 10, filters: dict = None,
     # 한다. 이게 동점 "해결"은 아니다 — 그건 score_mode가 하는 일이고,
     # 이 정렬은 그러고도 남는 동점의 순서를 재현 가능하게만 만든다.
     scored.sort(key=lambda x: (-x[0], x[1]))
-    return [
-        (job_id, sc, {"matched_techs": hit, "matched_count": len(hit)})
-        for sc, job_id, hit in scored[:top_k]
-    ]
+
+    # job_pool 리포트에 적힌 (source, job_id) 중복 777건 때문에, 서로 다른
+    # 공고인데 job_id 문자열이 같은 경우가 있다. 여기서 완전히 구분할 방법이
+    # 없으니(HANDOFF의 job_id 시그니처를 그대로 유지하는 한), 점수가 높은
+    # 쪽만 남기고 스킵한다 — top_k 자리가 같은 id로 중복 소모되는 걸 막는
+    # 최소한의 조치다. 근본 해결은 job_pool이 진짜 고유 식별자를 주는 것.
+    seen = set()
+    result = []
+    for sc, job_id, hit in scored:
+        if job_id in seen:
+            continue
+        seen.add(job_id)
+        result.append((job_id, sc, {"matched_techs": hit, "matched_count": len(hit)}))
+        if len(result) >= top_k:
+            break
+    return result
 
 
 def compare_score_modes(as_of="2026-06-20", n=200, k=10, ratios=(1.0, 0.6, 0.4)):
