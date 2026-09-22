@@ -159,25 +159,65 @@ def random_baseline(pool, queries, k=DEFAULT_K, seed=0):
     return {f'recall@{k}': hit / n, 'mrr': rr / n, 'n': n}
 
 
+def make_query_set(pool, n=DEFAULT_N, ratios=DEFAULT_RATIOS, seed=0):
+    """{보유율: 질의목록} — **풀이 달라지는 실험에서는 이걸 먼저 만들어 고정한다.**
+
+    ⚠️ `seed` 를 고정해도 **풀이 바뀌면 질의가 바뀐다.** `make_queries()` 가
+    pool 의 *행 인덱스*로 섞고 뽑기 때문이다(`rng.shuffle(idx)` ·
+    `random.Random(seed + i)`). `load_pool()` 은 마지막에 `reset_index()` 를
+    하므로, 필터 하나만 달라져도 같은 공고의 인덱스가 바뀌어 질의 집합과
+    "남긴 스킬"이 함께 달라진다.
+
+    그래서 두 풀을 비교할 때 `evaluate()` 를 각각 부르면 **점수 차이가 방식
+    차이인지 표본 차이인지 구분할 수 없다.** 실제로 당했다 — require_techs
+    유무를 그렇게 재서 96.5% vs 94.0% 를 얻었는데, 질의를 고정해 다시 재 보니
+    소수점까지 동일했다(2026-09-22).
+
+        qs = make_query_set(wide_pool)                 # 넓은 풀에서 한 번만
+        a = evaluate(rec_a, pool=wide_pool,   queries=qs)
+        b = evaluate(rec_b, pool=narrow_pool, queries=qs)   # 같은 질의를 던진다
+
+    좁은 풀에 정답이 없으면 그 질의는 구조상 실패한다 — 넓은 풀 쪽에서 만들고,
+    정답이 좁은 풀에도 있는지는 부르는 쪽이 확인한다.
+    """
+    qs = {r: make_queries(pool, n=n, keep_ratio=r, seed=seed) for r in ratios}
+    if HEADLINE_RATIO not in qs:
+        qs[HEADLINE_RATIO] = make_queries(pool, n=n, keep_ratio=HEADLINE_RATIO,
+                                          seed=seed)
+    return qs
+
+
 def evaluate(recommend, pool=None, n=DEFAULT_N, k=DEFAULT_K,
-             ratios=DEFAULT_RATIOS, seed=0, as_of='2026-06-20', verbose=True):
+             ratios=DEFAULT_RATIOS, seed=0, as_of='2026-06-20', verbose=True,
+             queries=None):
     """추천 함수를 채점한다.
 
     recommend  (resume_text, top_k=..) -> [(job_id, score, evidence), ...]
     pool       job_pool.load_pool() 결과. None 이면 기본 조건으로 로드한다
     as_of      pool 을 직접 만들 때의 기준일. 오늘로 두면 open 이 2건뿐이라
                필터를 켠 추천기는 아무것도 못 돌려준다(데이터가 2026.06~07 수집)
+    queries    make_query_set() 결과. **풀이 다른 둘을 비교할 때는 반드시 넘긴다**
+               — 이유는 make_query_set() 의 ⚠️ 참조. 생략하면 이 풀에서 새로
+               만들므로, 단독 측정에는 넘기지 않아도 된다
 
     반환: 헤드라인(가장 어려운 조건)과 조건별 표를 함께 돌려준다.
     """
     if pool is None:
         pool = job_pool.load_pool(as_of=as_of)
+    if queries is None:
+        queries = make_query_set(pool, n=n, ratios=ratios, seed=seed)
+    else:
+        miss = [r for r in ratios if r not in queries]
+        if miss:
+            raise ValueError(
+                "queries 에 없는 보유율을 채점하려 한다: %s (있는 것: %s). "
+                "조용히 다른 질의로 재는 것보다 여기서 멈추는 게 낫다."
+                % (miss, sorted(queries)))
 
     out = {'pool_size': len(pool), 'by_ratio': {}}
     for ratio in ratios:
-        q = make_queries(pool, n=n, keep_ratio=ratio, seed=seed)
-        out['by_ratio'][ratio] = score(recommend, q, k)
-    q = make_queries(pool, n=n, keep_ratio=HEADLINE_RATIO, seed=seed)
+        out['by_ratio'][ratio] = score(recommend, queries[ratio], k)
+    q = queries.get(HEADLINE_RATIO) or queries[ratios[-1]]
     out['random'] = random_baseline(pool, q, k, seed)
     out.update(out['by_ratio'].get(HEADLINE_RATIO, out['by_ratio'][ratios[-1]]))
     out['caveat'] = ("가짜 이력서는 공고 스킬을 그대로 베낀 것이라 진짜 이력서보다 "
@@ -235,40 +275,56 @@ def idf_baseline(pool, idf, include_extra=False, norm='none'):
     #
     # 공고 쪽 분모는 질의와 무관하므로 미리 계산한다. `sorted(techs)`로 더하는
     # 이유는 아래 recommend 안의 ⚠️ 주석과 같다(순회 순서 고정).
-    den = {}          # sqrt · linear · count 가 쓰는 공고별 분모
-    job_sum = {}      # Σ idf(공고)   — jaccard 분모
-    job_l2 = {}       # √Σ idf²(공고) — cosine 분모
-    for jid, techs in jobs:
+    # ⚠️ 분모를 `job_id` 로 키잡은 dict 에 담으면 **틀린다.** `job_id` 는 이
+    #    데이터에서 777종 1,554행이 중복이라(job_pool 리포트) 같은 키의 두 번째
+    #    행이 첫 번째의 분모를 덮어쓴다. 그러면 어떤 공고가 *다른 공고의* 분모로
+    #    나눠져, score = Σidf(hit)/√Σidf(job) 의 수학적 상한 √Σidf(hit) 를
+    #    넘는 점수가 나온다(job_techs ⊇ hit 이므로 항상 Σidf(job) ≥ Σidf(hit)).
+    #
+    #    실측(2026-09-22): 분모가 실제로 오염되는 id 175종, 질의 200건 중
+    #    **56건**의 top-10 에 상한 위반 공고가 끼어 정답을 밀어냈다. 그 탓에
+    #    하한선으로 배포했던 sqrt 수치가 틀려 있었다(HANDOFF 92.5%).
+    #
+    #    이 저장소가 CLAUDE 함정 목록에 적어둔 "(source, job_id) dict 조인 금지"를
+    #    바로 이 파일이 다시 밟은 것이다. 아래 make_queries 는 `~dup` 으로 질의
+    #    쪽을 막아뇠는데 채점 대상 쪽에는 그 방어가 없었다.
+    #    → 분모는 dict 가 아니라 **jobs 행 순서와 1:1인 리스트**로 들고 간다.
+    den = [1.0] * len(jobs)       # sqrt · linear · count 가 쓰는 공고별 분모
+    job_sum = [0.0] * len(jobs)   # Σ idf(공고)   — jaccard 분모
+    job_l2 = [1.0] * len(jobs)    # √Σ idf²(공고) — cosine 분모
+    for i, (jid, techs) in enumerate(jobs):
         ts = sorted(techs)
         s = sum(idf.get(t, 0.0) for t in ts)
-        job_sum[jid] = s
+        job_sum[i] = s
         if norm == 'cosine':
             l2 = math.sqrt(sum(idf.get(t, 0.0) ** 2 for t in ts))
-            job_l2[jid] = l2 if l2 > 0 else 1.0
+            job_l2[i] = l2 if l2 > 0 else 1.0
         elif norm == 'sqrt':
-            den[jid] = math.sqrt(s) if s > 0 else 1.0
+            den[i] = math.sqrt(s) if s > 0 else 1.0
         elif norm == 'linear':
-            den[jid] = s if s > 0 else 1.0
+            den[i] = s if s > 0 else 1.0
         elif norm == 'count':
-            den[jid] = len(ts) or 1
+            den[i] = len(ts) or 1
 
     def _scorer(mine):
-        """질의마다 한 번 만든다 — cosine·jaccard 는 분모가 이력서에도 의존한다."""
+        """질의마다 한 번 만든다 — cosine·jaccard 는 분모가 이력서에도 의존한다.
+
+        첫 인자는 `job_id` 가 아니라 **jobs 의 행 인덱스**다(위 ⚠️ 참조)."""
         if norm == 'cosine':
             r = math.sqrt(sum(idf.get(t, 0.0) ** 2 for t in sorted(mine))) or 1.0
-            return lambda jid, h: (sum(idf.get(t, 0.0) ** 2 for t in h)
-                                   / (job_l2[jid] * r))
+            return lambda i, h: (sum(idf.get(t, 0.0) ** 2 for t in h)
+                                 / (job_l2[i] * r))
         if norm == 'jaccard':
             r = sum(idf.get(t, 0.0) for t in sorted(mine))
 
-            def f(jid, h):
+            def f(i, h):
                 hs = sum(idf.get(t, 0.0) for t in h)
-                u = job_sum[jid] + r - hs      # |A∪B| = |A| + |B| − |A∩B|
+                u = job_sum[i] + r - hs        # |A∪B| = |A| + |B| − |A∩B|
                 return hs / u if u > 0 else 0.0
             return f
         if norm == 'none':
-            return lambda jid, h: sum(idf.get(t, 0.0) for t in h)
-        return lambda jid, h: sum(idf.get(t, 0.0) for t in h) / den[jid]
+            return lambda i, h: sum(idf.get(t, 0.0) for t in h)
+        return lambda i, h: sum(idf.get(t, 0.0) for t in h) / den[i]
 
     def recommend(resume_text, top_k=10, filters=None):
         mine = extract_techs(resume_text)
@@ -279,7 +335,7 @@ def idf_baseline(pool, idf, include_extra=False, norm='none'):
             return []
         sc_of = _scorer(mine)
         scored = []
-        for jid, techs in jobs:
+        for i, (jid, techs) in enumerate(jobs):
             hit = mine & techs
             if hit:
                 # ⚠️ `for t in hit`로 더하면 **실행마다 점수가 달라진다.**
@@ -296,7 +352,7 @@ def idf_baseline(pool, idf, include_extra=False, norm='none'):
                 #
                 # 정렬된 순서로 더하면 순서가 고정되고 결과가 재현된다.
                 h = sorted(hit)
-                scored.append((sc_of(jid, h), jid, h))
+                scored.append((sc_of(i, h), jid, h))
         # 안정 정렬이므로 동점은 pool 행 순서를 따른다. 동점 처리 정책 자체는
         # 심지우가 고를 설계 결정이고(HANDOFF 2번), 여기서는 대조군이 흔들리지
         # 않게 고정하는 것까지만 한다.
